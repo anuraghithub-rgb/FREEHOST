@@ -46,7 +46,7 @@ def health():
     return json.dumps({'status': 'ok', 'uptime': get_uptime()})
 
 # Environment variables with YOUR TOKEN
-TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '8713065612:AAFjB0OJl21_lNPuDPF017byvVcfEwhKC9Y')
+TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '871306FjB21_lNPuDPF017byvVcfEwhKC9Y')
 OWNER_ID = int(os.environ.get('OWNER_ID', 8477195695))
 ADMIN_ID = int(os.environ.get('ADMIN_ID', 8477195695))
 YOUR_USERNAME = os.environ.get('YOUR_USERNAME', '@BGMI_main')
