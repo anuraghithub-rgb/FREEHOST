@@ -1,4 +1,4 @@
-# H.py - COMPLETE FIXED VERSION FOR RENDER
+# H.py - COMPLETE FIXED VERSION FOR RENDER WITH MALWARE DETECTION
 import telebot
 import subprocess
 import os
@@ -18,6 +18,7 @@ import re
 import sys
 import atexit
 import requests
+import hashlib
 
 from flask import Flask
 from threading import Thread
@@ -38,7 +39,7 @@ app = Flask('')
 
 @app.route('/')
 def home():
-    return "🤖 Bot is running on Render!"
+    return "🤖 Bot is running on Render with Malware Detection!"
 
 @app.route('/health')
 def health():
@@ -109,6 +110,197 @@ ADMIN_COMMAND_BUTTONS_LAYOUT_USER_SPEC = [
     ["👑 Admin Panel", "📞 Contact Owner"],
     ["🤖 MPX Ai", "⏱ Uptime"],
 ]
+
+# ==================== MALWARE DETECTION SYSTEM ====================
+SUSPICIOUS_PATTERNS = [
+    # Command execution
+    r'eval\s*\(',
+    r'exec\s*\(',
+    r'__import__\s*\(',
+    r'os\.system\s*\(',
+    r'subprocess\.call\s*\(',
+    r'subprocess\.Popen\s*\(',
+    r'os\.popen\s*\(',
+    r'commands\.getoutput',
+    r'Runtime\.exec',
+    
+    # File operations (dangerous)
+    r'os\.remove\s*\(',
+    r'shutil\.rmtree\s*\(',
+    r'os\.unlink\s*\(',
+    r'os\.rmdir\s*\(',
+    
+    # Network (backdoor)
+    r'socket\.socket',
+    r'requests\.post',
+    r'urllib\.request',
+    r'http\.client',
+    r'ftplib',
+    r'telnetlib',
+    
+    # Encoding/Decoding (obfuscation)
+    r'base64\.b64decode',
+    r'codecs\.decode',
+    r'zlib\.decompress',
+    
+    # Privilege escalation
+    r'sudo',
+    r'chmod',
+    r'chown',
+    r'os\.setuid',
+    
+    # Telegram bot tokens (potential bot abuse)
+    r'\d{9,10}:AA[A-Za-z0-9_-]{33,}',
+    
+    # Crypto miners
+    r'crypto',
+    r'miner',
+    r'bitcoin',
+    r'monero',
+    
+    # Keyloggers
+    r'pynput',
+    r'keyboard\.record',
+    r'GetAsyncKeyState',
+    
+    # Ransomware indicators
+    r'encrypt',
+    r'decrypt',
+    r'\.locked',
+    r'ransom',
+]
+
+SAFE_PATTERNS = [
+    r'print\s*\(',
+    r'bot\.send_message',
+    r'reply_to',
+    r'telebot',
+    r'flask',
+    r'django',
+    r'@bot\.message_handler',
+    r'@app\.route',
+]
+
+def scan_file_for_malware(file_path, file_type):
+    """
+    Scan file for malware patterns
+    Returns: (is_malicious, reason)
+    """
+    try:
+        if file_type == 'py':
+            return scan_python_file(file_path)
+        elif file_type == 'js':
+            return scan_javascript_file(file_path)
+        elif file_type == 'zip':
+            return scan_zip_file(file_path)
+        else:
+            return (False, "Unknown file type")
+    except Exception as e:
+        logger.error(f"Malware scan error: {e}")
+        return (True, f"Scan error: {str(e)}")
+
+def scan_python_file(file_path):
+    """Scan Python file for suspicious code"""
+    try:
+        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+            content = f.read()
+        
+        # Check for suspicious patterns
+        for pattern in SUSPICIOUS_PATTERNS:
+            if re.search(pattern, content, re.IGNORECASE):
+                # Check if it's not a safe pattern (false positive)
+                is_safe = False
+                for safe_pattern in SAFE_PATTERNS:
+                    if re.search(safe_pattern, content, re.IGNORECASE):
+                        is_safe = True
+                        break
+                
+                # If it's suspicious AND not safe, mark as malicious
+                if not is_safe:
+                    return (True, f"Suspicious pattern found: {pattern}")
+        
+        # Additional checks
+        lines = content.split('\n')
+        
+        # Check for large base64 strings (often used in obfuscation)
+        base64_pattern = r'[A-Za-z0-9+/]{100,}=*'
+        if re.search(base64_pattern, content):
+            return (True, "Large base64 string detected (possible obfuscation)")
+        
+        # Check for very long lines (obfuscation)
+        for line_num, line in enumerate(lines, 1):
+            if len(line) > 500:
+                return (True, f"Very long line at {line_num} (possible obfuscation)")
+        
+        # Heuristic: If file is mostly binary/encoded
+        if len(content) > 0:
+            ascii_ratio = sum(1 for c in content if 32 <= ord(c) <= 126) / len(content)
+            if ascii_ratio < 0.5:
+                return (True, "Low ASCII ratio (possible encoded malware)")
+        
+        return (False, "Clean")
+        
+    except Exception as e:
+        logger.error(f"Error scanning Python file: {e}")
+        return (True, f"Scan error: {str(e)}")
+
+def scan_javascript_file(file_path):
+    """Scan JavaScript file for suspicious patterns"""
+    try:
+        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+            content = f.read()
+        
+        js_suspicious = [
+            r'eval\s*\(',
+            r'Function\s*\(',
+            r'child_process\.exec',
+            r'require\s*\(\s*[\'"]child_process[\'"]\s*\)',
+            r'process\.binding',
+            r'vm\.runInNewContext',
+            r'setTimeout\s*\(\s*[\'"].*[\'"]\s*,\s*\d+',
+            r'atob\s*\(|btoa\s*\(',
+            r'\\x[0-9a-fA-F]{2}',
+        ]
+        
+        for pattern in js_suspicious:
+            if re.search(pattern, content, re.IGNORECASE):
+                return (True, f"Suspicious JS pattern: {pattern}")
+        
+        return (False, "Clean")
+        
+    except Exception as e:
+        logger.error(f"Error scanning JS file: {e}")
+        return (True, f"Scan error: {str(e)}")
+
+def scan_zip_file(file_path):
+    """Scan ZIP archive contents for malware"""
+    try:
+        suspicious_files = []
+        temp_dir = tempfile.mkdtemp(prefix="malware_scan_")
+        
+        with zipfile.ZipFile(file_path, 'r') as zf:
+            for member in zf.infolist():
+                if member.filename.endswith('.py') or member.filename.endswith('.js'):
+                    try:
+                        # Extract and scan
+                        extracted_path = zf.extract(member, temp_dir)
+                        file_type = 'py' if member.filename.endswith('.py') else 'js'
+                        is_malicious, reason = scan_file_for_malware(extracted_path, file_type)
+                        if is_malicious:
+                            suspicious_files.append(f"{member.filename}: {reason}")
+                    except Exception as e:
+                        suspicious_files.append(f"{member.filename}: Extract error - {e}")
+        
+        # Cleanup
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        
+        if suspicious_files:
+            return (True, f"Suspicious files in ZIP: {', '.join(suspicious_files[:3])}")
+        return (False, "Clean")
+        
+    except Exception as e:
+        logger.error(f"Error scanning ZIP file: {e}")
+        return (True, f"ZIP scan error: {str(e)}")
 
 def init_db():
     logger.info(f"Initializing database at: {DATABASE_PATH}")
@@ -281,6 +473,7 @@ def send_file_for_approval(message, user_id, file_name, file_type):
         f"🆔 **User ID:** `{user_id}`\n"
         f"📁 **File:** `{file_name}`\n"
         f"📊 **Type:** {file_type}\n"
+        f"⚠️ **Malware detected or suspicious content**\n"
         f"🕐 **Time:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
         f"**Choose action:**"
     )
@@ -1004,11 +1197,11 @@ def create_pending_files_list():
             minutes = int(time_ago.total_seconds() / 60)
             time_text = f"{minutes}m ago" if minutes < 60 else f"{int(minutes/60)}h ago"
             
-            btn_text = f"👤 {user_id} | 📁 {file_name} | ⏰ {time_text}"
+            btn_text = f"⚠️ {user_id} | {file_name} | {time_text}"
             callback_data = f'review_{user_id}_{file_name}'
             markup.add(types.InlineKeyboardButton(btn_text, callback_data=callback_data))
         except:
-            btn_text = f"👤 {user_id} | 📁 {file_name}"
+            btn_text = f"⚠️ {user_id} | {file_name}"
             callback_data = f'review_{user_id}_{file_name}'
             markup.add(types.InlineKeyboardButton(btn_text, callback_data=callback_data))
     
@@ -1099,18 +1292,51 @@ def handle_zip_file(downloaded_file_content, file_name_zip, message):
             shutil.move(src_path, dest_path); moved_count +=1
         logger.info(f"Moved {moved_count} items to {user_folder}")
 
-        save_user_file(user_id, main_script_name, file_type)
-        save_file_approval(user_id, main_script_name, file_type, FILE_STATUS_PENDING)
-        send_file_for_approval(message, user_id, main_script_name, file_type)
+        # SCAN FOR MALWARE BEFORE SAVING APPROVAL
+        temp_script_path = os.path.join(user_folder, main_script_name)
         
-        logger.info(f"Saved main script '{main_script_name}' ({file_type}) for {user_id} from zip.")
-        bot.reply_to(message, 
-                    f"✅ Files extracted successfully!\n"
-                    f"📁 Main script: `{main_script_name}`\n"
-                    f"📋 Status: **PENDING APPROVAL**\n"
-                    f"👮‍♂️ Admins have been notified.\n"
-                    f"You'll receive a notification when approved.",
-                    parse_mode='Markdown')
+        # Scan the main script file
+        is_malicious, reason = scan_file_for_malware(temp_script_path, file_type)
+        
+        save_user_file(user_id, main_script_name, file_type)
+        
+        if is_malicious:
+            # Malware detected - require admin approval
+            logger.warning(f"Malware detected in ZIP {main_script_name} from user {user_id}: {reason}")
+            save_file_approval(user_id, main_script_name, file_type, FILE_STATUS_PENDING)
+            send_file_for_approval(message, user_id, main_script_name, file_type)
+            
+            bot.reply_to(message, 
+                        f"⚠️ **Security Warning!**\n\n"
+                        f"ZIP contains suspicious code in `{main_script_name}`!\n"
+                        f"🔍 Reason: {reason}\n\n"
+                        f"📋 Status: **PENDING ADMIN REVIEW**\n"
+                        f"👮‍♂️ File sent to admins for manual review.",
+                        parse_mode='Markdown')
+        else:
+            # Clean - auto approve
+            save_file_approval(user_id, main_script_name, file_type, FILE_STATUS_APPROVED, user_id)
+            
+            bot.reply_to(message, 
+                        f"✅ ZIP extracted successfully!\n"
+                        f"📁 Main script: `{main_script_name}`\n"
+                        f"🔍 Malware scan: **CLEAN**\n"
+                        f"📋 Status: **AUTO-APPROVED** ✅\n"
+                        f"🎯 You can now run this file.",
+                        parse_mode='Markdown')
+            
+            # Notify admin about auto-approved file
+            for admin_id in admin_ids:
+                try:
+                    bot.send_message(admin_id,
+                                   f"📋 **Auto-Approved ZIP**\n\n"
+                                   f"👤 User: `{user_id}`\n"
+                                   f"📁 Main Script: `{main_script_name}`\n"
+                                   f"✅ Status: Clean - Auto Approved\n"
+                                   f"⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                                   parse_mode='Markdown')
+                except:
+                    pass
 
     except zipfile.BadZipFile as e:
         logger.error(f"Bad zip file from {user_id}: {e}")
@@ -1123,39 +1349,102 @@ def handle_zip_file(downloaded_file_content, file_name_zip, message):
             try: shutil.rmtree(temp_dir); logger.info(f"Cleaned temp dir: {temp_dir}")
             except Exception as e: logger.error(f"Failed to clean temp dir {temp_dir}: {e}", exc_info=True)
 
-def handle_js_file(file_path, script_owner_id, user_folder, file_name, message):
-    try:
-        save_user_file(script_owner_id, file_name, 'js')
-        save_file_approval(script_owner_id, file_name, 'js', FILE_STATUS_PENDING)
-        send_file_for_approval(message, script_owner_id, file_name, 'js')
-        
-        bot.reply_to(message,
-                    f"✅ JS file `{file_name}` uploaded successfully!\n"
-                    f"📋 Status: **PENDING APPROVAL**\n"
-                    f"👮‍♂️ Admins have been notified.\n"
-                    f"You'll receive a notification when approved.",
-                    parse_mode='Markdown')
-                    
-    except Exception as e:
-        logger.error(f"Error processing JS file {file_name} for {script_owner_id}: {e}", exc_info=True)
-        bot.reply_to(message, f"Error processing JS file: {str(e)}")
-
 def handle_py_file(file_path, script_owner_id, user_folder, file_name, message):
     try:
-        save_user_file(script_owner_id, file_name, 'py')
-        save_file_approval(script_owner_id, file_name, 'py', FILE_STATUS_PENDING)
-        send_file_for_approval(message, script_owner_id, file_name, 'py')
+        # Scan for malware
+        is_malicious, reason = scan_file_for_malware(file_path, 'py')
         
-        bot.reply_to(message,
-                    f"✅ Python file `{file_name}` uploaded successfully!\n"
-                    f"📋 Status: **PENDING APPROVAL**\n"
-                    f"👮‍♂️ Admins have been notified.\n"
-                    f"You'll receive a notification when approved.",
-                    parse_mode='Markdown')
+        if is_malicious:
+            # Malware detected - require admin approval
+            logger.warning(f"Malware detected in {file_name} from user {script_owner_id}: {reason}")
+            save_user_file(script_owner_id, file_name, 'py')
+            save_file_approval(script_owner_id, file_name, 'py', FILE_STATUS_PENDING)
+            send_file_for_approval(message, script_owner_id, file_name, 'py')
+            
+            bot.reply_to(message,
+                        f"⚠️ **Security Warning!**\n\n"
+                        f"File `{file_name}` contains suspicious code!\n"
+                        f"🔍 Reason: {reason}\n\n"
+                        f"📋 Status: **PENDING ADMIN REVIEW**\n"
+                        f"👮‍♂️ File has been sent to admins for manual review.\n\n"
+                        f"Auto-approval failed due to security concerns.",
+                        parse_mode='Markdown')
+        else:
+            # No malware - auto approve
+            save_user_file(script_owner_id, file_name, 'py')
+            save_file_approval(script_owner_id, file_name, 'py', FILE_STATUS_APPROVED, script_owner_id)
+            
+            bot.reply_to(message,
+                        f"✅ File `{file_name}` scanned and **CLEAN**!\n"
+                        f"🔍 No malware detected.\n\n"
+                        f"📋 Status: **AUTO-APPROVED** ✅\n"
+                        f"🎯 You can now run this file.",
+                        parse_mode='Markdown')
+            
+            # Notify admin about auto-approved file
+            for admin_id in admin_ids:
+                try:
+                    bot.send_message(admin_id,
+                                   f"📋 **Auto-Approved Python File**\n\n"
+                                   f"👤 User: `{script_owner_id}`\n"
+                                   f"📁 File: `{file_name}`\n"
+                                   f"✅ Status: Clean - Auto Approved\n"
+                                   f"⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                                   parse_mode='Markdown')
+                except:
+                    pass
                     
     except Exception as e:
         logger.error(f"Error processing Python file {file_name} for {script_owner_id}: {e}", exc_info=True)
         bot.reply_to(message, f"Error processing Python file: {str(e)}")
+
+def handle_js_file(file_path, script_owner_id, user_folder, file_name, message):
+    try:
+        # Scan for malware
+        is_malicious, reason = scan_file_for_malware(file_path, 'js')
+        
+        if is_malicious:
+            # Malware detected - require admin approval
+            logger.warning(f"Malware detected in JS {file_name} from user {script_owner_id}: {reason}")
+            save_user_file(script_owner_id, file_name, 'js')
+            save_file_approval(script_owner_id, file_name, 'js', FILE_STATUS_PENDING)
+            send_file_for_approval(message, script_owner_id, file_name, 'js')
+            
+            bot.reply_to(message,
+                        f"⚠️ **Security Warning!**\n\n"
+                        f"JS File `{file_name}` contains suspicious code!\n"
+                        f"🔍 Reason: {reason}\n\n"
+                        f"📋 Status: **PENDING ADMIN REVIEW**\n"
+                        f"👮‍♂️ File has been sent to admins for manual review.",
+                        parse_mode='Markdown')
+        else:
+            # No malware - auto approve
+            save_user_file(script_owner_id, file_name, 'js')
+            save_file_approval(script_owner_id, file_name, 'js', FILE_STATUS_APPROVED, script_owner_id)
+            
+            bot.reply_to(message,
+                        f"✅ JS File `{file_name}` scanned and **CLEAN**!\n"
+                        f"🔍 No malware detected.\n\n"
+                        f"📋 Status: **AUTO-APPROVED** ✅\n"
+                        f"🎯 You can now run this file.",
+                        parse_mode='Markdown')
+            
+            # Notify admin about auto-approved file
+            for admin_id in admin_ids:
+                try:
+                    bot.send_message(admin_id,
+                                   f"📋 **Auto-Approved JS File**\n\n"
+                                   f"👤 User: `{script_owner_id}`\n"
+                                   f"📁 File: `{file_name}`\n"
+                                   f"✅ Status: Clean - Auto Approved\n"
+                                   f"⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                                   parse_mode='Markdown')
+                except:
+                    pass
+                    
+    except Exception as e:
+        logger.error(f"Error processing JS file {file_name} for {script_owner_id}: {e}", exc_info=True)
+        bot.reply_to(message, f"Error processing JS file: {str(e)}")
 
 def _logic_send_welcome(message):
     user_id = message.from_user.id
@@ -1204,8 +1493,9 @@ def _logic_send_welcome(message):
                         f"Username: `@{user_username or 'Not set'}`\n"
                         f"Your Status: {user_status}{expiry_info}\n"
                         f"Files Uploaded: {current_files} / {limit_str}\n\n"
-                        f"✅ **IMPORTANT:** All files require admin approval.\n"
-                        f"📋 Files will be reviewed before running.\n\n"
+                        f"🛡️ **AUTO MALWARE DETECTION ACTIVE**\n"
+                        f"✅ Clean files are auto-approved\n"
+                        f"⚠️ Suspicious files require admin review\n\n"
                         f"Host & run Python (`.py`) or JS (`.js`) scripts.\n"
                         f"Upload single scripts or `.zip` archives.\n\n"
                         f"Use buttons or type commands.")
@@ -1237,7 +1527,9 @@ def _logic_upload_file(message):
         return
     bot.reply_to(message, 
                 "Send your Python (`.py`), JS (`.js`), or ZIP (`.zip`) file.\n\n"
-                "⚠️ **Note:** All files require admin approval before running.")
+                "🛡️ **Note:** Files are automatically scanned for malware.\n"
+                "✅ Clean files are auto-approved.\n"
+                "⚠️ Suspicious files require admin review.")
 
 def _logic_check_files(message):
     user_id = message.from_user.id
@@ -1277,7 +1569,7 @@ def _logic_view_pending(message):
         bot.reply_to(message, "✅ No pending files for approval.")
         return
     
-    response = "📋 **Pending Files for Approval:**\n\n"
+    response = "📋 **Pending Files for Approval (Malware Detected):**\n\n"
     markup = types.InlineKeyboardMarkup(row_width=1)
     
     for idx, (user_id_file, file_name, file_type, uploaded_time) in enumerate(pending_files[:20], 1):
@@ -1287,11 +1579,11 @@ def _logic_view_pending(message):
             minutes = int(time_ago.total_seconds() / 60)
             time_text = f"{minutes}m ago" if minutes < 60 else f"{int(minutes/60)}h ago"
             
-            btn_text = f"{idx}. 👤 {user_id_file} | 📁 {file_name} | ⏰ {time_text}"
-            response += f"{idx}. `{file_name}` (User: {user_id_file}, Type: {file_type}) - {time_text}\n"
+            btn_text = f"{idx}. ⚠️ {user_id_file} | {file_name} | {time_text}"
+            response += f"{idx}. `{file_name}` (User: {user_id_file}, Type: {file_type}) - {time_text} - **⚠️ MALWARE DETECTED**\n"
         except:
-            btn_text = f"{idx}. 👤 {user_id_file} | 📁 {file_name}"
-            response += f"{idx}. `{file_name}` (User: {user_id_file}, Type: {file_type})\n"
+            btn_text = f"{idx}. ⚠️ {user_id_file} | {file_name}"
+            response += f"{idx}. `{file_name}` (User: {user_id_file}, Type: {file_type}) - **⚠️ MALWARE DETECTED**\n"
         
         callback_data = f'review_{user_id_file}_{file_name}'
         markup.add(types.InlineKeyboardButton(btn_text, callback_data=callback_data))
@@ -1324,7 +1616,7 @@ def _logic_bot_speed(message):
         
         if user_id in admin_ids:
             pending_count = get_pending_files_count()
-            speed_msg += f"\n📋 Pending Files: {pending_count}"
+            speed_msg += f"\n⚠️ Pending Malware Files: {pending_count}"
             
         bot.edit_message_text(speed_msg, chat_id, wait_msg.message_id)
     except Exception as e:
@@ -1375,7 +1667,7 @@ def _logic_statistics(message):
                            f"Your Running Bots: {user_running_bots}\n"
                            f"📊 **Approval Stats:**\n"
                            f"   ✅ Approved Files: {approved_count}\n"
-                           f"   ⏳ Pending Files: {pending_count}")
+                           f"   ⚠️ Malware Pending: {pending_count}")
         stats_msg = stats_msg_base + stats_msg_admin
     else:
         stats_msg = stats_msg_base + f"Your Running Bots: {user_running_bots}"
@@ -1634,7 +1926,7 @@ def handle_file_upload_doc(message):
         download_wait_msg = bot.reply_to(message, f"Downloading `{file_name}`...")
         file_info_tg_doc = bot.get_file(doc.file_id)
         downloaded_file_content = bot.download_file(file_info_tg_doc.file_path)
-        bot.edit_message_text(f"Downloaded `{file_name}`. Processing...", chat_id, download_wait_msg.message_id)
+        bot.edit_message_text(f"Downloaded `{file_name}`. Scanning for malware...", chat_id, download_wait_msg.message_id)
         logger.info(f"Downloaded {file_name} for user {user_id}")
         user_folder = get_user_folder(user_id)
 
@@ -1644,8 +1936,22 @@ def handle_file_upload_doc(message):
             file_path = os.path.join(user_folder, file_name)
             with open(file_path, 'wb') as f: f.write(downloaded_file_content)
             logger.info(f"Saved single file to {file_path}")
-            if file_ext == '.js': handle_js_file(file_path, user_id, user_folder, file_name, message)
-            elif file_ext == '.py': handle_py_file(file_path, user_id, user_folder, file_name, message)
+            
+            # Scan file after saving
+            file_type = 'js' if file_ext == '.js' else 'py'
+            is_malicious, reason = scan_file_for_malware(file_path, file_type)
+            
+            if is_malicious:
+                bot.edit_message_text(f"⚠️ Malware detected in `{file_name}`! Sending for admin review...", 
+                                      chat_id, download_wait_msg.message_id, parse_mode='Markdown')
+            else:
+                bot.edit_message_text(f"✅ File `{file_name}` scanned - CLEAN! Auto-approving...", 
+                                      chat_id, download_wait_msg.message_id, parse_mode='Markdown')
+            
+            if file_ext == '.js': 
+                handle_js_file(file_path, user_id, user_folder, file_name, message)
+            elif file_ext == '.py': 
+                handle_py_file(file_path, user_id, user_folder, file_name, message)
     except telebot.apihelper.ApiTelegramException as e:
          logger.error(f"Telegram API Error handling file for {user_id}: {e}", exc_info=True)
          if "file is too big" in str(e).lower():
@@ -1669,11 +1975,11 @@ def handle_approve_callback(call):
         if update_file_status(user_id, file_name, FILE_STATUS_APPROVED, admin_id):
             try:
                 bot.send_message(user_id,
-                               f"✅ **File Approved!**\n\n"
+                               f"✅ **Malware Review Complete - File Approved!**\n\n"
                                f"📁 File: `{file_name}`\n"
                                f"👮‍♂️ Approved by: Admin\n"
                                f"⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-                               f"You can now run this file using /checkfiles",
+                               f"File has been reviewed and approved for use.",
                                parse_mode='Markdown')
             except Exception as e:
                 logger.error(f"Failed to notify user {user_id} about approval: {e}")
@@ -1681,7 +1987,7 @@ def handle_approve_callback(call):
             bot.answer_callback_query(call.id, f"✅ File approved!")
             
             try:
-                bot.edit_message_text(f"✅ **APPROVED**\n\nFile: `{file_name}`\nUser: `{user_id}`\nBy: Admin `{admin_id}`",
+                bot.edit_message_text(f"✅ **APPROVED**\n\nFile: `{file_name}`\nUser: `{user_id}`\n⚠️ Malware reviewed and cleared\nBy: Admin `{admin_id}`",
                                     call.message.chat.id, call.message.message_id,
                                     parse_mode='Markdown')
             except:
@@ -1708,19 +2014,19 @@ def handle_reject_callback(call):
         if update_file_status(user_id, file_name, FILE_STATUS_REJECTED, admin_id):
             try:
                 bot.send_message(user_id,
-                               f"❌ **File Rejected!**\n\n"
+                               f"❌ **File Rejected Due to Malware!**\n\n"
                                f"📁 File: `{file_name}`\n"
                                f"👮‍♂️ Rejected by: Admin\n"
                                f"⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-                               f"Reason: File rejected by admin. Please upload a valid file.",
+                               f"Reason: File contains malicious/suspicious code. Please upload a clean file.",
                                parse_mode='Markdown')
             except Exception as e:
                 logger.error(f"Failed to notify user {user_id} about rejection: {e}")
             
-            bot.answer_callback_query(call.id, f"❌ File rejected!")
+            bot.answer_callback_query(call.id, f"❌ File rejected (Malware)!")
             
             try:
-                bot.edit_message_text(f"❌ **REJECTED**\n\nFile: `{file_name}`\nUser: `{user_id}`\nBy: Admin `{admin_id}`",
+                bot.edit_message_text(f"❌ **REJECTED - MALWARE DETECTED**\n\nFile: `{file_name}`\nUser: `{user_id}`\nBy: Admin `{admin_id}`",
                                     call.message.chat.id, call.message.message_id,
                                     parse_mode='Markdown')
             except:
@@ -1748,18 +2054,18 @@ def handle_review_callback(call):
         file_type = file_status.get('file_type', 'unknown')
         
         review_text = (
-            f"📋 **File Review**\n\n"
+            f"⚠️ **Malware Review Required** ⚠️\n\n"
             f"👤 **User ID:** `{user_id}`\n"
             f"📁 **File:** `{file_name}`\n"
             f"📊 **Type:** {file_type}\n"
-            f"📋 **Status:** {file_status['status'].upper()}\n\n"
+            f"🔍 **Status:** MALWARE DETECTED - Needs manual review\n\n"
             f"**Choose action:**"
         )
         
         markup = types.InlineKeyboardMarkup(row_width=2)
         markup.add(
-            types.InlineKeyboardButton("✅ Approve", callback_data=f'approve_{user_id}_{file_name}'),
-            types.InlineKeyboardButton("❌ Reject", callback_data=f'reject_{user_id}_{file_name}')
+            types.InlineKeyboardButton("✅ Approve (Safe)", callback_data=f'approve_{user_id}_{file_name}'),
+            types.InlineKeyboardButton("❌ Reject (Malware)", callback_data=f'reject_{user_id}_{file_name}')
         )
         markup.add(types.InlineKeyboardButton("🔙 Back to Pending", callback_data='view_pending'))
         
@@ -1803,12 +2109,15 @@ def handle_callbacks(call):
             file_status = get_file_status(script_owner_id, file_name)
             
             status_text = "✅ **APPROVED**" if file_status['status'] == FILE_STATUS_APPROVED else \
-                         "⏳ **PENDING**" if file_status['status'] == FILE_STATUS_PENDING else "❌ **REJECTED**"
+                         "⏳ **PENDING REVIEW**" if file_status['status'] == FILE_STATUS_PENDING else "❌ **REJECTED**"
             
             response = f"📋 **File Status:** {status_text}\n\n"
             response += f"📁 File: `{file_name}`\n"
             response += f"👤 User: `{script_owner_id}`\n"
             response += f"📊 Type: {file_status.get('file_type', 'unknown')}\n"
+            
+            if file_status['status'] == FILE_STATUS_PENDING:
+                response += "⚠️ **Malware detected - Pending admin review**\n"
             
             if file_status['reviewed_by']:
                 response += f"👮‍♂️ Reviewed by: Admin `{file_status['reviewed_by']}`\n"
@@ -1908,7 +2217,9 @@ def upload_callback(call):
     bot.answer_callback_query(call.id)
     bot.send_message(call.message.chat.id, 
                     "Send your Python (`.py`), JS (`.js`), or ZIP (`.zip`) file.\n\n"
-                    "⚠️ **Note:** All files require admin approval before running.")
+                    "🛡️ **Auto Malware Scanner Active**\n"
+                    "✅ Clean files auto-approved\n"
+                    "⚠️ Suspicious files sent for admin review")
 
 def check_files_callback(call):
     user_id = call.from_user.id
@@ -1933,13 +2244,13 @@ def check_files_callback(call):
         
         status_icon = "🟢" if is_running else "⚪"
         approval_icon = "✅" if file_status['status'] == FILE_STATUS_APPROVED else \
-                       "⏳" if file_status['status'] == FILE_STATUS_PENDING else "❌"
+                       "⚠️" if file_status['status'] == FILE_STATUS_PENDING else "❌"
         
         btn_text = f"{approval_icon} {file_name} ({file_type}) - {status_icon}"
         markup.add(types.InlineKeyboardButton(btn_text, callback_data=f'file_{user_id}_{file_name}'))
         
         approval_text = "Approved" if file_status['status'] == FILE_STATUS_APPROVED else \
-                       "Pending" if file_status['status'] == FILE_STATUS_PENDING else "Rejected"
+                       "Pending Review (Malware)" if file_status['status'] == FILE_STATUS_PENDING else "Rejected"
         response += f"{approval_icon} `{file_name}` - {approval_text}\n"
     
     markup.add(types.InlineKeyboardButton("Back to Main", callback_data='back_to_main'))
@@ -1975,7 +2286,7 @@ def file_control_callback(call):
         file_type = next((f[1] for f in user_files_list if f[0] == file_name), '?')
         
         approval_status = f"✅ Approved" if file_status['status'] == FILE_STATUS_APPROVED else \
-                         f"⏳ Pending" if file_status['status'] == FILE_STATUS_PENDING else f"❌ Rejected"
+                         f"⚠️ Malware Review" if file_status['status'] == FILE_STATUS_PENDING else f"❌ Rejected"
         
         try:
             bot.edit_message_text(
@@ -2329,7 +2640,7 @@ def speed_callback(call):
         
         if user_id in admin_ids:
             pending_count = get_pending_files_count()
-            speed_msg += f"\n📋 Pending Files: {pending_count}"
+            speed_msg += f"\n⚠️ Malware Pending: {pending_count}"
             
         bot.answer_callback_query(call.id)
         bot.edit_message_text(speed_msg, chat_id, call.message.message_id, reply_markup=create_main_menu_inline(user_id))
@@ -2360,10 +2671,11 @@ def back_to_main_callback(call):
     if user_id in admin_ids:
         pending_count = get_pending_files_count()
         if pending_count > 0:
-            admin_info = f"\n📋 Pending Files: {pending_count}"
+            admin_info = f"\n⚠️ Malware Pending: {pending_count}"
     
     main_menu_text = (f"Welcome back, {call.from_user.first_name}!\n\nID: `{user_id}`\n"
                       f"Status: {user_status}{expiry_info}{admin_info}\nFiles: {current_files} / {limit_str}\n\n"
+                      f"🛡️ Auto Malware Detection Active\n"
                       f"Use buttons or type commands.")
     try:
         bot.answer_callback_query(call.id)
@@ -2700,7 +3012,7 @@ def keep_alive():
 if __name__ == '__main__':
     keep_alive()  # Render के लिए Flask server start
     
-    logger.info("="*40 + "\nBot Starting Up on Render...\n" + f"Python: {sys.version.split()[0]}\n" +
+    logger.info("="*40 + "\nBot Starting Up on Render with MALWARE DETECTION...\n" + f"Python: {sys.version.split()[0]}\n" +
                 f"Base Dir: {BASE_DIR}\nUpload Dir: {UPLOAD_BOTS_DIR}\n" +
                 f"Data Dir: {IROTECH_DIR}\nOwner ID: {OWNER_ID}\nAdmins: {admin_ids}\n" +
                 f"Start Time: {BOT_START_TIME}" + "="*40)
