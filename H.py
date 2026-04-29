@@ -1,4 +1,4 @@
-# H.py - COMPLETE FIXED VERSION FOR RENDER WITH MALWARE DETECTION
+# H.py - SECURE VERSION WITH ANTI-CLONE & ADMIN CONTROLS
 import telebot
 import subprocess
 import os
@@ -19,6 +19,7 @@ import sys
 import atexit
 import requests
 import hashlib
+import uuid
 
 from flask import Flask
 from threading import Thread
@@ -29,12 +30,10 @@ BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 UPLOAD_BOTS_DIR = os.path.join('/tmp', 'upload_bots')
 IROTECH_DIR = os.path.join('/tmp', 'inf')
 DATABASE_PATH = os.path.join(IROTECH_DIR, 'bot_data.db')
-CLONED_BOTS_DIR = os.path.join('/tmp', 'cloned_bots')
 
 # Create directories
 os.makedirs(UPLOAD_BOTS_DIR, exist_ok=True)
 os.makedirs(IROTECH_DIR, exist_ok=True)
-os.makedirs(CLONED_BOTS_DIR, exist_ok=True)
 
 # Flask app for Render
 app = Flask('')
@@ -47,12 +46,41 @@ def home():
 def health():
     return json.dumps({'status': 'ok', 'uptime': get_uptime()})
 
+# ========== ANIMATION FRAMES ==========
+ANIMATION_FRAMES = [
+    "▰▰▰▰▰▰▰▰▰▰ 100% ✅",
+    "▰▰▰▰▰▰▰▰▰▱ 90%",
+    "▰▰▰▰▰▰▰▰▱▱ 80%",
+    "▰▰▰▰▰▰▰▱▱▱ 70%",
+    "▰▰▰▰▰▰▱▱▱▱ 60%",
+    "▰▰▰▰▰▱▱▱▱▱ 50%",
+    "▰▰▰▰▱▱▱▱▱▱ 40%",
+    "▰▰▰▱▱▱▱▱▱▱ 30%",
+    "▰▰▱▱▱▱▱▱▱▱ 20%",
+    "▰▱▱▱▱▱▱▱▱▱ 10%",
+    "▱▱▱▱▱▱▱▱▱▱ 0%"
+]
+
+SPINNER = ["◐", "◓", "◑", "◒"]
+
+# ========== SECURITY & ANTI-CLONE SYSTEM ==========
+# Generate unique bot fingerprint
+BOT_FINGERPRINT = hashlib.sha256(f"{OWNER_ID}_{YOUR_USERNAME}_{uuid.getnode()}".encode()).hexdigest()[:16]
+
 # Environment variables with YOUR TOKEN
 TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '871306FjB21_lNPuDPF017byvVcfEwhKC9Y')
 OWNER_ID = int(os.environ.get('OWNER_ID', 8477195695))
 ADMIN_ID = int(os.environ.get('ADMIN_ID', 8477195695))
 YOUR_USERNAME = os.environ.get('YOUR_USERNAME', '@BGMI_main')
 UPDATE_CHANNEL = os.environ.get('UPDATE_CHANNEL', 'https://t.me/UROGGY')
+
+# ANTI-CLONE VERIFICATION
+# Only these specific user IDs can access admin features
+ALLOWED_ADMIN_IDS = {OWNER_ID, ADMIN_ID}  # Add more if needed
+
+# Bot will only work for these users (empty = all users allowed, but admin features restricted)
+# Set to empty list to allow all users, but admins must be in ALLOWED_ADMIN_IDS
+ALLOWED_USERS = []  # Leave empty to allow all users, or add specific user IDs
 
 A4F_API_URL = "https://samuraiapi.in/v1/chat/completions"
 A4F_API_KEY = "sk-NK6SS9tpWghyFJwkZLoCis1sMaF6RwQ5WF09mUoKKR0VKCm7"
@@ -78,19 +106,35 @@ bot_scripts = {}
 user_subscriptions = {}
 user_files = {}
 active_users = set()
-admin_ids = {ADMIN_ID, OWNER_ID}
+admin_ids = {OWNER_ID, ADMIN_ID}
 bot_locked = False
 
 # Admin permissions system
-admin_permissions = {}  # admin_id -> {'can_approve': bool, 'can_broadcast': bool, 'can_lock': bool, 'can_run_all': bool, 'can_manage_subs': bool, 'can_view_files': bool}
-DEFAULT_ADMIN_PERMISSIONS = {
-    'can_approve': True,
-    'can_broadcast': False,
-    'can_lock': False,
-    'can_run_all': False,
-    'can_manage_subs': False,
-    'can_view_files': True
-}
+class AdminPermissions:
+    def __init__(self):
+        self.permissions = {
+            'can_broadcast': {OWNER_ID, ADMIN_ID},
+            'can_lock_bot': {OWNER_ID, ADMIN_ID},
+            'can_manage_admins': {OWNER_ID},  # Only owner
+            'can_approve_files': {OWNER_ID, ADMIN_ID},
+            'can_run_all_scripts': {OWNER_ID, ADMIN_ID},
+            'can_manage_subs': {OWNER_ID, ADMIN_ID},
+            'can_view_pending': {OWNER_ID, ADMIN_ID},
+            'can_see_admin_panel': {OWNER_ID, ADMIN_ID},
+        }
+    
+    def has_permission(self, user_id, permission):
+        return user_id in self.permissions.get(permission, set())
+    
+    def add_admin_permission(self, admin_id, permission):
+        if permission in self.permissions:
+            self.permissions[permission].add(admin_id)
+    
+    def remove_admin_permission(self, admin_id, permission):
+        if permission in self.permissions and admin_id != OWNER_ID:
+            self.permissions[permission].discard(admin_id)
+
+admin_permissions = AdminPermissions()
 
 # Logging setup for Render
 logging.basicConfig(
@@ -107,14 +151,32 @@ FILE_STATUS_PENDING = "pending"
 FILE_STATUS_APPROVED = "approved"
 FILE_STATUS_REJECTED = "rejected"
 
+# Store original owner username for anti-clone verification
+ORIGINAL_OWNER_USERNAME = YOUR_USERNAME
+ORIGINAL_UPDATE_CHANNEL = UPDATE_CHANNEL
+
+def check_bot_ownership():
+    """Verify this is the genuine bot instance (anti-clone)"""
+    current_owner = os.environ.get('YOUR_USERNAME', '@BGMI_main')
+    if current_owner != ORIGINAL_OWNER_USERNAME:
+        logger.warning(f"⚠️ CLONE DETECTED! Owner mismatch: {current_owner} vs {ORIGINAL_OWNER_USERNAME}")
+        return False
+    return True
+
+def is_authorized_user(user_id):
+    """Check if user is authorized to use the bot (anti-clone)"""
+    if not ALLOWED_USERS:
+        return True  # All users allowed, but admin features restricted
+    return user_id in ALLOWED_USERS or user_id in admin_ids
+
 COMMAND_BUTTONS_LAYOUT_USER_SPEC = [
     ["📢 Updates Channel", "⏱ Uptime"],
     ["📤 Upload File", "📂 Check Files"],
     ["⚡ Bot Speed", "📊 Statistics"],
-    ["📞 Contact Owner", "🤖 MPX Ai"],
-    ["🔄 Clone Bot"]
+    ["📞 Contact Owner", "🤖 MPX Ai"]
 ]
 
+# Admin buttons - Only visible to authorized admins
 ADMIN_COMMAND_BUTTONS_LAYOUT_USER_SPEC = [
     ["📢 Updates Channel", "/ping"],
     ["📤 Upload File", "📂 Check Files"],
@@ -123,8 +185,73 @@ ADMIN_COMMAND_BUTTONS_LAYOUT_USER_SPEC = [
     ["🔒 Lock Bot", "🟢 Running All Code"],
     ["👑 Admin Panel", "📞 Contact Owner"],
     ["🤖 MPX Ai", "⏱ Uptime"],
-    ["🔄 Clone Bot"],
 ]
+
+# ========== TOGGLE BUTTONS FOR ADMIN PANEL ==========
+def create_admin_settings_panel():
+    """Create admin panel with toggle buttons for various permissions"""
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    
+    # Permission toggles
+    markup.row(
+        types.InlineKeyboardButton("📢 Broadcast " + ("✅" if admin_permissions.has_permission(OWNER_ID, 'can_broadcast') else "❌"), 
+                                   callback_data='toggle_broadcast'),
+        types.InlineKeyboardButton("🔒 Lock Bot " + ("✅" if admin_permissions.has_permission(OWNER_ID, 'can_lock_bot') else "❌"),
+                                   callback_data='toggle_lock_bot_perm')
+    )
+    markup.row(
+        types.InlineKeyboardButton("👮 Manage Admins " + ("✅" if admin_permissions.has_permission(OWNER_ID, 'can_manage_admins') else "❌"),
+                                   callback_data='toggle_manage_admins'),
+        types.InlineKeyboardButton("✅ Approve Files " + ("✅" if admin_permissions.has_permission(OWNER_ID, 'can_approve_files') else "❌"),
+                                   callback_data='toggle_approve_files')
+    )
+    markup.row(
+        types.InlineKeyboardButton("🟢 Run All Scripts " + ("✅" if admin_permissions.has_permission(OWNER_ID, 'can_run_all_scripts') else "❌"),
+                                   callback_data='toggle_run_all'),
+        types.InlineKeyboardButton("💳 Manage Subs " + ("✅" if admin_permissions.has_permission(OWNER_ID, 'can_manage_subs') else "❌"),
+                                   callback_data='toggle_manage_subs')
+    )
+    markup.row(
+        types.InlineKeyboardButton("📋 View Pending " + ("✅" if admin_permissions.has_permission(OWNER_ID, 'can_view_pending') else "❌"),
+                                   callback_data='toggle_view_pending')
+    )
+    markup.row(
+        types.InlineKeyboardButton("➕ Add New Admin", callback_data='add_admin_detailed'),
+        types.InlineKeyboardButton("➖ Remove Admin", callback_data='remove_admin_detailed')
+    )
+    markup.row(
+        types.InlineKeyboardButton("📋 List All Admins", callback_data='list_admins_detailed')
+    )
+    markup.row(
+        types.InlineKeyboardButton("🔙 Back to Main", callback_data='back_to_main')
+    )
+    
+    return markup
+
+def create_permission_toggle_menu(admin_id_to_edit=None):
+    """Create menu to toggle specific permissions for an admin"""
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    
+    target_id = admin_id_to_edit if admin_id_to_edit else OWNER_ID
+    
+    permissions_list = [
+        ('can_broadcast', '📢 Broadcast'),
+        ('can_lock_bot', '🔒 Lock Bot'),
+        ('can_approve_files', '✅ Approve Files'),
+        ('can_run_all_scripts', '🟢 Run All Scripts'),
+        ('can_manage_subs', '💳 Manage Subscriptions'),
+        ('can_view_pending', '📋 View Pending Files'),
+    ]
+    
+    for perm_key, perm_name in permissions_list:
+        status = "✅" if admin_permissions.has_permission(target_id, perm_key) else "❌"
+        markup.add(types.InlineKeyboardButton(
+            f"{perm_name} {status}", 
+            callback_data=f'toggle_perm_{target_id}_{perm_key}'
+        ))
+    
+    markup.add(types.InlineKeyboardButton("🔙 Back to Admin Settings", callback_data='admin_settings'))
+    return markup
 
 # ==================== MALWARE DETECTION SYSTEM ====================
 SUSPICIOUS_PATTERNS = [
@@ -332,13 +459,6 @@ def init_db():
         c.execute('''CREATE TABLE IF NOT EXISTS admins
                      (user_id INTEGER PRIMARY KEY)''')
         
-        # Admin permissions table
-        c.execute('''CREATE TABLE IF NOT EXISTS admin_permissions
-                     (admin_id INTEGER PRIMARY KEY, can_approve INTEGER DEFAULT 1,
-                      can_broadcast INTEGER DEFAULT 0, can_lock INTEGER DEFAULT 0,
-                      can_run_all INTEGER DEFAULT 0, can_manage_subs INTEGER DEFAULT 0,
-                      can_view_files INTEGER DEFAULT 1)''')
-        
         # File approvals table
         c.execute('''CREATE TABLE IF NOT EXISTS file_approvals
                      (user_id INTEGER, file_name TEXT, status TEXT, 
@@ -346,23 +466,50 @@ def init_db():
                       uploaded_time TEXT, message_id INTEGER,
                       PRIMARY KEY (user_id, file_name))''')
         
-        # Cloned bots table
-        c.execute('''CREATE TABLE IF NOT EXISTS cloned_bots
-                     (owner_id INTEGER, bot_token TEXT, bot_username TEXT,
-                      started_at TEXT, status TEXT, PRIMARY KEY (owner_id, bot_token))''')
+        # Admin permissions table
+        c.execute('''CREATE TABLE IF NOT EXISTS admin_permissions
+                     (admin_id INTEGER, permission TEXT,
+                      PRIMARY KEY (admin_id, permission))''')
         
         c.execute('INSERT OR IGNORE INTO admins (user_id) VALUES (?)', (OWNER_ID,))
         if ADMIN_ID != OWNER_ID:
              c.execute('INSERT OR IGNORE INTO admins (user_id) VALUES (?)', (ADMIN_ID,))
-             
-        # Set owner permissions (full access)
-        c.execute('INSERT OR IGNORE INTO admin_permissions (admin_id, can_approve, can_broadcast, can_lock, can_run_all, can_manage_subs, can_view_files) VALUES (?, 1, 1, 1, 1, 1, 1)', (OWNER_ID,))
-        
         conn.commit()
         conn.close()
         logger.info("Database initialized successfully.")
     except Exception as e:
         logger.error(f"Database initialization error: {e}", exc_info=True)
+
+def load_admin_permissions_from_db():
+    """Load admin permissions from database"""
+    try:
+        conn = sqlite3.connect(DATABASE_PATH, check_same_thread=False)
+        c = conn.cursor()
+        c.execute('SELECT admin_id, permission FROM admin_permissions')
+        for admin_id, permission in c.fetchall():
+            admin_permissions.add_admin_permission(admin_id, permission)
+        conn.close()
+        logger.info(f"Loaded admin permissions from DB")
+    except Exception as e:
+        logger.error(f"Error loading admin permissions: {e}")
+
+def save_admin_permission(admin_id, permission, add=True):
+    """Save or remove admin permission from database"""
+    try:
+        conn = sqlite3.connect(DATABASE_PATH, check_same_thread=False)
+        c = conn.cursor()
+        if add:
+            c.execute('INSERT OR IGNORE INTO admin_permissions (admin_id, permission) VALUES (?, ?)',
+                     (admin_id, permission))
+        else:
+            c.execute('DELETE FROM admin_permissions WHERE admin_id=? AND permission=?',
+                     (admin_id, permission))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        logger.error(f"Error saving admin permission: {e}")
+        return False
 
 def load_data():
     logger.info("Loading data from database...")
@@ -388,59 +535,15 @@ def load_data():
 
         c.execute('SELECT user_id FROM admins')
         admin_ids.update(user_id for (user_id,) in c.fetchall())
-        
-        # Load admin permissions
-        c.execute('SELECT admin_id, can_approve, can_broadcast, can_lock, can_run_all, can_manage_subs, can_view_files FROM admin_permissions')
-        for row in c.fetchall():
-            admin_permissions[row[0]] = {
-                'can_approve': bool(row[1]),
-                'can_broadcast': bool(row[2]),
-                'can_lock': bool(row[3]),
-                'can_run_all': bool(row[4]),
-                'can_manage_subs': bool(row[5]),
-                'can_view_files': bool(row[6])
-            }
 
         conn.close()
         logger.info(f"Data loaded: {len(active_users)} users, {len(user_subscriptions)} subscriptions, {len(admin_ids)} admins.")
+        
+        # Load admin permissions
+        load_admin_permissions_from_db()
+        
     except Exception as e:
         logger.error(f"Error loading data: {e}", exc_info=True)
-
-def has_permission(admin_id, permission):
-    """Check if admin has specific permission"""
-    if admin_id == OWNER_ID:
-        return True
-    perms = admin_permissions.get(admin_id, DEFAULT_ADMIN_PERMISSIONS.copy())
-    return perms.get(permission, False)
-
-def save_admin_permission(admin_id, permission, value):
-    """Save admin permission to database"""
-    with DB_LOCK:
-        conn = sqlite3.connect(DATABASE_PATH, check_same_thread=False)
-        c = conn.cursor()
-        try:
-            c.execute(f'UPDATE admin_permissions SET {permission} = ? WHERE admin_id = ?', (1 if value else 0, admin_id))
-            if c.rowcount == 0:
-                # Insert if not exists
-                c.execute(f'INSERT INTO admin_permissions (admin_id, {permission}) VALUES (?, ?)', (admin_id, 1 if value else 0))
-            conn.commit()
-            
-            if admin_id not in admin_permissions:
-                admin_permissions[admin_id] = DEFAULT_ADMIN_PERMISSIONS.copy()
-            admin_permissions[admin_id][permission] = value
-            logger.info(f"Permission {permission} set to {value} for admin {admin_id}")
-        except Exception as e:
-            logger.error(f"Error saving admin permission: {e}")
-        finally:
-            conn.close()
-
-def get_admin_username(admin_id):
-    """Get admin's username"""
-    try:
-        chat = bot.get_chat(admin_id)
-        return chat.username or f"user_{admin_id}"
-    except:
-        return f"user_{admin_id}"
 
 init_db()
 load_data()
@@ -543,7 +646,7 @@ def get_pending_files_count():
             conn.close()
 
 def send_file_for_approval(message, user_id, file_name, file_type):
-    """Send file to all admins for approval (only those with approve permission)"""
+    """Send file to all admins for approval"""
     user = message.from_user
     file_info = (
         f"📄 **NEW FILE FOR APPROVAL**\n\n"
@@ -565,7 +668,7 @@ def send_file_for_approval(message, user_id, file_name, file_type):
     markup.add(types.InlineKeyboardButton("📋 View All Pending", callback_data='view_pending'))
     
     for admin_id in admin_ids:
-        if has_permission(admin_id, 'can_approve'):
+        if admin_permissions.has_permission(admin_id, 'can_approve_files'):
             try:
                 bot.forward_message(admin_id, message.chat.id, message.message_id)
                 sent_msg = bot.send_message(admin_id, file_info, 
@@ -1130,12 +1233,8 @@ def add_admin_db(admin_id):
         c = conn.cursor()
         try:
             c.execute('INSERT OR IGNORE INTO admins (user_id) VALUES (?)', (admin_id,))
-            c.execute('INSERT OR IGNORE INTO admin_permissions (admin_id, can_approve, can_broadcast, can_lock, can_run_all, can_manage_subs, can_view_files) VALUES (?, 1, 0, 0, 0, 0, 1)', (admin_id,))
             conn.commit()
             admin_ids.add(admin_id)
-            admin_permissions[admin_id] = DEFAULT_ADMIN_PERMISSIONS.copy()
-            admin_permissions[admin_id]['can_approve'] = True
-            admin_permissions[admin_id]['can_view_files'] = True
             logger.info(f"Added admin {admin_id} to DB")
         except sqlite3.Error as e: logger.error(f"SQLite error adding admin {admin_id}: {e}")
         except Exception as e: logger.error(f"Unexpected error adding admin {admin_id}: {e}", exc_info=True)
@@ -1153,26 +1252,28 @@ def remove_admin_db(admin_id):
             c.execute('SELECT 1 FROM admins WHERE user_id = ?', (admin_id,))
             if c.fetchone():
                 c.execute('DELETE FROM admins WHERE user_id = ?', (admin_id,))
-                c.execute('DELETE FROM admin_permissions WHERE admin_id = ?', (admin_id,))
                 conn.commit()
                 removed = c.rowcount > 0
                 if removed: 
                     admin_ids.discard(admin_id)
-                    if admin_id in admin_permissions:
-                        del admin_permissions[admin_id]
                     logger.info(f"Removed admin {admin_id} from DB")
-                else: logger.warning(f"Admin {admin_id} found but delete affected 0 rows.")
+                else: 
+                    logger.warning(f"Admin {admin_id} found but delete affected 0 rows.")
             else:
                 logger.warning(f"Admin {admin_id} not found in DB.")
                 admin_ids.discard(admin_id)
-                if admin_id in admin_permissions:
-                    del admin_permissions[admin_id]
             return removed
         except sqlite3.Error as e: logger.error(f"SQLite error removing admin {admin_id}: {e}"); return False
         except Exception as e: logger.error(f"Unexpected error removing admin {admin_id}: {e}", exc_info=True); return False
         finally: conn.close()
 
 def create_main_menu_inline(user_id):
+    # Anti-clone check - if user is not authorized, deny access
+    if not is_authorized_user(user_id):
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup.add(types.InlineKeyboardButton("❌ Unauthorized Access", callback_data='no_access'))
+        return markup
+    
     markup = types.InlineKeyboardMarkup(row_width=2)
     buttons = [
         types.InlineKeyboardButton('📢 Updates Channel', url=UPDATE_CHANNEL),
@@ -1181,86 +1282,47 @@ def create_main_menu_inline(user_id):
         types.InlineKeyboardButton('⚡ Bot Speed', callback_data='speed'),
         types.InlineKeyboardButton('📊 Statistics', callback_data='stats'),
         types.InlineKeyboardButton('📞 Contact Owner', url=f'https://t.me/{YOUR_USERNAME.replace("@", "")}'),
-        types.InlineKeyboardButton('🤖 MPX AI', callback_data='mpx_ai'),
-        types.InlineKeyboardButton('🔄 Clone Bot', callback_data='clone_bot')
+        types.InlineKeyboardButton('🤖 MPX AI', callback_data='mpx_ai')
     ]
-
-    if user_id in admin_ids:
+    
+    # Only show admin buttons to authorized admins
+    show_admin_buttons = (user_id in admin_ids and user_id in ALLOWED_ADMIN_IDS) or user_id == OWNER_ID
+    
+    if show_admin_buttons:
         pending_count = get_pending_files_count()
         pending_text = f"📋 Pending Files ({pending_count})" if pending_count > 0 else "📋 Pending Files"
         
-        admin_buttons = []
-        if has_permission(user_id, 'can_approve'):
-            admin_buttons.append(types.InlineKeyboardButton(pending_text, callback_data='view_pending'))
-        if has_permission(user_id, 'can_manage_subs'):
-            admin_buttons.append(types.InlineKeyboardButton('💳 Subscriptions', callback_data='subscription'))
-        if has_permission(user_id, 'can_broadcast'):
-            admin_buttons.append(types.InlineKeyboardButton('📢 Broadcast', callback_data='broadcast'))
-        if has_permission(user_id, 'can_lock'):
-            lock_text = '🔒 Lock Bot' if not bot_locked else '🔓 Unlock Bot'
-            lock_cb = 'lock_bot' if not bot_locked else 'unlock_bot'
-            admin_buttons.append(types.InlineKeyboardButton(lock_text, callback_data=lock_cb))
-        if has_permission(user_id, 'can_run_all'):
-            admin_buttons.append(types.InlineKeyboardButton('🟢 Run All User Scripts', callback_data='run_all_scripts'))
-        
-        admin_buttons.append(types.InlineKeyboardButton('👑 Admin Panel', callback_data='admin_panel'))
-        
+        admin_buttons = [
+            types.InlineKeyboardButton(pending_text, callback_data='view_pending'),
+            types.InlineKeyboardButton('💳 Subscriptions', callback_data='subscription'),
+            types.InlineKeyboardButton('📢 Broadcast', callback_data='broadcast'),
+            types.InlineKeyboardButton('🔒 Lock Bot' if not bot_locked else '🔓 Unlock Bot',
+                                     callback_data='lock_bot' if not bot_locked else 'unlock_bot'),
+            types.InlineKeyboardButton('👑 Admin Panel', callback_data='admin_panel'),
+            types.InlineKeyboardButton('🟢 Run All User Scripts', callback_data='run_all_scripts')
+        ]
         markup.add(buttons[0])
         markup.add(buttons[1], buttons[2])
-        markup.add(buttons[3], admin_buttons[0] if admin_buttons else buttons[4])
-        
-        # Add remaining admin buttons
-        for btn in admin_buttons[1:]:
-            markup.add(btn)
-        
-        markup.add(buttons[4] if admin_buttons else buttons[5], buttons[7] if admin_buttons else buttons[6])
+        markup.add(buttons[3], admin_buttons[0])
+        markup.add(buttons[4], admin_buttons[1])
+        markup.add(admin_buttons[2], admin_buttons[4])
+        markup.add(admin_buttons[3])
         markup.add(buttons[5], buttons[6])
-        markup.add(buttons[8])  # Clone Bot button
     else:
         markup.add(buttons[0])
         markup.add(buttons[1], buttons[2])
         markup.add(buttons[3])
         markup.add(buttons[4])
         markup.add(buttons[5], buttons[6])
-        markup.add(buttons[7], buttons[8])  # MPX AI and Clone Bot
 
     markup.add(types.InlineKeyboardButton('⏱ Uptime', callback_data='uptime'))
     return markup
 
-def create_admin_permissions_menu(admin_id):
-    """Create inline keyboard for managing admin permissions"""
-    perms = admin_permissions.get(admin_id, DEFAULT_ADMIN_PERMISSIONS.copy())
-    admin_name = get_admin_username(admin_id)
-    
-    markup = types.InlineKeyboardMarkup(row_width=1)
-    markup.add(types.InlineKeyboardButton(f"👑 Admin: {admin_name}", callback_data='noop'))
-    markup.add(types.InlineKeyboardButton("─" * 20, callback_data='noop'))
-    
-    # Permission toggles
-    approve_icon = "✅" if perms.get('can_approve', False) else "❌"
-    markup.add(types.InlineKeyboardButton(f"{approve_icon} Approve Files", callback_data=f'toggle_perm_{admin_id}_can_approve'))
-    
-    broadcast_icon = "✅" if perms.get('can_broadcast', False) else "❌"
-    markup.add(types.InlineKeyboardButton(f"{broadcast_icon} Broadcast Messages", callback_data=f'toggle_perm_{admin_id}_can_broadcast'))
-    
-    lock_icon = "✅" if perms.get('can_lock', False) else "❌"
-    markup.add(types.InlineKeyboardButton(f"{lock_icon} Lock/Unlock Bot", callback_data=f'toggle_perm_{admin_id}_can_lock'))
-    
-    runall_icon = "✅" if perms.get('can_run_all', False) else "❌"
-    markup.add(types.InlineKeyboardButton(f"{runall_icon} Run All Scripts", callback_data=f'toggle_perm_{admin_id}_can_run_all'))
-    
-    subs_icon = "✅" if perms.get('can_manage_subs', False) else "❌"
-    markup.add(types.InlineKeyboardButton(f"{subs_icon} Manage Subscriptions", callback_data=f'toggle_perm_{admin_id}_can_manage_subs'))
-    
-    view_icon = "✅" if perms.get('can_view_files', False) else "❌"
-    markup.add(types.InlineKeyboardButton(f"{view_icon} View User Files", callback_data=f'toggle_perm_{admin_id}_can_view_files'))
-    
-    markup.add(types.InlineKeyboardButton("🔙 Back to Admin Panel", callback_data='admin_panel'))
-    return markup
-
 def create_reply_keyboard_main_menu(user_id):
+    # Only show admin keyboard to authorized admins
+    show_admin_keyboard = (user_id in admin_ids and user_id in ALLOWED_ADMIN_IDS) or user_id == OWNER_ID
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    layout_to_use = ADMIN_COMMAND_BUTTONS_LAYOUT_USER_SPEC if user_id in admin_ids else COMMAND_BUTTONS_LAYOUT_USER_SPEC
+    layout_to_use = ADMIN_COMMAND_BUTTONS_LAYOUT_USER_SPEC if show_admin_keyboard else COMMAND_BUTTONS_LAYOUT_USER_SPEC
     for row_buttons_text in layout_to_use:
         markup.add(*[types.KeyboardButton(text) for text in row_buttons_text])
     return markup
@@ -1303,7 +1365,10 @@ def create_admin_panel():
     )
     markup.row(
         types.InlineKeyboardButton('📋 List Admins', callback_data='list_admins'),
-        types.InlineKeyboardButton('📋 Manage Admin Permissions', callback_data='manage_admin_perms')
+        types.InlineKeyboardButton('📋 Pending Files', callback_data='view_pending')
+    )
+    markup.row(
+        types.InlineKeyboardButton('⚙️ Admin Settings', callback_data='admin_settings')
     )
     markup.row(types.InlineKeyboardButton('🔙 Back to Main', callback_data='back_to_main'))
     return markup
@@ -1460,9 +1525,9 @@ def handle_zip_file(downloaded_file_content, file_name_zip, message):
                         f"🎯 You can now run this file.",
                         parse_mode='Markdown')
             
-            # Notify admin about auto-approved file (only those with view_files permission)
+            # Notify admin about auto-approved file (only if admin has permission)
             for admin_id in admin_ids:
-                if has_permission(admin_id, 'can_view_files'):
+                if admin_permissions.has_permission(admin_id, 'can_approve_files'):
                     try:
                         bot.send_message(admin_id,
                                        f"📋 **Auto-Approved ZIP**\n\n"
@@ -1517,9 +1582,9 @@ def handle_py_file(file_path, script_owner_id, user_folder, file_name, message):
                         f"🎯 You can now run this file.",
                         parse_mode='Markdown')
             
-            # Notify admin about auto-approved file (only those with view_files permission)
+            # Notify admin about auto-approved file (only if admin has permission)
             for admin_id in admin_ids:
-                if has_permission(admin_id, 'can_view_files'):
+                if admin_permissions.has_permission(admin_id, 'can_approve_files'):
                     try:
                         bot.send_message(admin_id,
                                        f"📋 **Auto-Approved Python File**\n\n"
@@ -1566,9 +1631,9 @@ def handle_js_file(file_path, script_owner_id, user_folder, file_name, message):
                         f"🎯 You can now run this file.",
                         parse_mode='Markdown')
             
-            # Notify admin about auto-approved file (only those with view_files permission)
+            # Notify admin about auto-approved file (only if admin has permission)
             for admin_id in admin_ids:
-                if has_permission(admin_id, 'can_view_files'):
+                if admin_permissions.has_permission(admin_id, 'can_approve_files'):
                     try:
                         bot.send_message(admin_id,
                                        f"📋 **Auto-Approved JS File**\n\n"
@@ -1584,144 +1649,6 @@ def handle_js_file(file_path, script_owner_id, user_folder, file_name, message):
         logger.error(f"Error processing JS file {file_name} for {script_owner_id}: {e}", exc_info=True)
         bot.reply_to(message, f"Error processing JS file: {str(e)}")
 
-# ==================== BOT CLONE SYSTEM ====================
-cloned_bots = {}  # token -> bot_instance
-
-def run_cloned_bot(token, owner_id):
-    """Run a cloned bot with given token"""
-    try:
-        clone_bot = telebot.TeleBot(token)
-        
-        @clone_bot.message_handler(commands=['start', 'help'])
-        def clone_start(message):
-            clone_bot.reply_to(message, f"🤖 **Cloned Bot Running!**\n\n"
-                                       f"👑 Owner: `{owner_id}`\n"
-                                       f"⚡ Status: Active\n\n"
-                                       f"This bot is hosted on the main bot's server.",
-                                       parse_mode='Markdown')
-        
-        @clone_bot.message_handler(func=lambda m: True)
-        def clone_echo(message):
-            clone_bot.reply_to(message, f"Echo: {message.text}")
-        
-        logger.info(f"Cloned bot started for owner {owner_id} with token {token[:15]}...")
-        clone_bot.infinity_polling(timeout=60, long_polling_timeout=30)
-    except Exception as e:
-        logger.error(f"Error running cloned bot for owner {owner_id}: {e}")
-
-def start_cloned_bot(token, owner_id):
-    """Start a cloned bot in a separate thread"""
-    thread = threading.Thread(target=run_cloned_bot, args=(token, owner_id), daemon=True)
-    thread.start()
-    
-    # Store in cloned_bots dict
-    cloned_bots[token] = {
-        'thread': thread,
-        'owner_id': owner_id,
-        'started_at': datetime.now(),
-        'status': 'running'
-    }
-    
-    # Save to database
-    with DB_LOCK:
-        conn = sqlite3.connect(DATABASE_PATH, check_same_thread=False)
-        c = conn.cursor()
-        try:
-            c.execute('INSERT OR REPLACE INTO cloned_bots (owner_id, bot_token, bot_username, started_at, status) VALUES (?, ?, ?, ?, ?)',
-                     (owner_id, token, "unknown", datetime.now().isoformat(), "running"))
-            conn.commit()
-        except Exception as e:
-            logger.error(f"Error saving cloned bot to DB: {e}")
-        finally:
-            conn.close()
-
-def _logic_clone_bot(message):
-    """Handle clone bot request"""
-    user_id = message.from_user.id
-    
-    msg = bot.reply_to(message, 
-                      "🤖 **Bot Clone System**\n\n"
-                      "Send your bot token to clone.\n\n"
-                      "Format: `1234567890:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw`\n\n"
-                      "⚠️ **Note:** The bot will run on this server.\n"
-                      "Type /cancel to abort.",
-                      parse_mode='Markdown')
-    bot.register_next_step_handler(msg, process_clone_bot_token)
-
-def process_clone_bot_token(message):
-    user_id = message.from_user.id
-    
-    if message.text and message.text.lower() == '/cancel':
-        bot.reply_to(message, "❌ Bot clone cancelled.")
-        return
-    
-    token = message.text.strip()
-    
-    # Validate token format
-    if not re.match(r'^\d{9,10}:AA[A-Za-z0-9_-]{33,}$', token):
-        bot.reply_to(message, "❌ Invalid bot token format!\n\n"
-                             "Correct format: `1234567890:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw`\n\n"
-                             "Get token from @BotFather.",
-                             parse_mode='Markdown')
-        return
-    
-    # Check if token is already running
-    if token in cloned_bots:
-        bot.reply_to(message, "❌ This bot is already running!")
-        return
-    
-    # Test the token
-    bot.reply_to(message, "🔄 Testing bot token...")
-    
-    try:
-        test_bot = telebot.TeleBot(token)
-        test_bot.get_me()
-        
-        # Start the cloned bot
-        start_cloned_bot(token, user_id)
-        
-        bot.reply_to(message, 
-                    f"✅ **Bot Cloned Successfully!**\n\n"
-                    f"🤖 Bot is now running on this server.\n"
-                    f"👑 Owner: `{user_id}`\n"
-                    f"📅 Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-                    f"Use /myclones to see your cloned bots.",
-                    parse_mode='Markdown')
-                    
-    except Exception as e:
-        bot.reply_to(message, f"❌ Failed to start bot!\n\nError: {str(e)}\n\n"
-                             "Make sure the token is valid and the bot hasn't been banned.")
-        logger.error(f"Failed to clone bot for user {user_id}: {e}")
-
-def _logic_my_clones(message):
-    """Show user's cloned bots"""
-    user_id = message.from_user.id
-    
-    with DB_LOCK:
-        conn = sqlite3.connect(DATABASE_PATH, check_same_thread=False)
-        c = conn.cursor()
-        try:
-            c.execute('SELECT bot_token, started_at, status FROM cloned_bots WHERE owner_id = ?', (user_id,))
-            clones = c.fetchall()
-        except Exception as e:
-            logger.error(f"Error fetching clones: {e}")
-            clones = []
-        finally:
-            conn.close()
-    
-    if not clones:
-        bot.reply_to(message, "📭 You don't have any cloned bots.\n\nUse **Clone Bot** button to clone a bot.")
-        return
-    
-    response = f"🤖 **Your Cloned Bots ({len(clones)})**\n\n"
-    
-    for idx, (token, started_at, status) in enumerate(clones, 1):
-        response += f"{idx}. Token: `{token[:20]}...`\n"
-        response += f"   Status: {'🟢 Running' if status == 'running' else '🔴 Stopped'}\n"
-        response += f"   Started: {started_at}\n\n"
-    
-    bot.reply_to(message, response, parse_mode='Markdown')
-
 def _logic_send_welcome(message):
     user_id = message.from_user.id
     chat_id = message.chat.id
@@ -1729,6 +1656,15 @@ def _logic_send_welcome(message):
     user_username = message.from_user.username
 
     logger.info(f"Welcome request from user_id: {user_id}, username: @{user_username}")
+    
+    # Anti-clone: Check if user is authorized
+    if not is_authorized_user(user_id):
+        bot.send_message(chat_id, 
+                        "❌ **Unauthorized Access Detected!**\n\n"
+                        "This bot instance appears to be a clone.\n"
+                        "Please contact the original bot owner.",
+                        parse_mode='Markdown')
+        return
 
     if bot_locked and user_id not in admin_ids:
         bot.send_message(chat_id, "Bot locked by admin. Try later.")
@@ -1765,30 +1701,16 @@ def _logic_send_welcome(message):
         else: user_status = "Free User (Expired Sub)"; remove_subscription_db(user_id)
     else: user_status = "Free User"
 
-    welcome_msg_text = (
-        f"══════════════════════════════\n"
-        f"       🅾🅶🅶🆈 🅰🆈🅴 🅱🅾🆃\n"
-        f"══════════════════════════════\n\n"
-        f"🔥 **WELCOME, {user_name.upper()}!** 🔥\n\n"
-        f"├─🆔 **User ID:** `{user_id}`\n"
-        f"├─👤 **Username:** @{user_username or 'Not set'}\n"
-        f"├─📊 **Status:** {user_status}{expiry_info}\n"
-        f"└─📁 **Files:** {current_files} / {limit_str}\n\n"
-        f"🛡️ **AUTO MALWARE DETECTION ACTIVE**\n"
-        f"├─✅ Clean files are auto-approved\n"
-        f"└─⚠️ Suspicious files require admin review\n\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"✨ **Features:**\n"
-        f"├─🐍 Run Python (`.py`) scripts\n"
-        f"├─📜 Run JS (`.js`) scripts\n"
-        f"├─📦 Upload ZIP archives\n"
-        f"├─🔄 Clone Telegram Bots\n"
-        f"├─🤖 MPX AI Assistant\n"
-        f"└─📊 Track bot statistics\n\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"💡 Use buttons below or type /help"
-    )
-    
+    welcome_msg_text = (f"Welcome, {user_name}!\n\nYour User ID: `{user_id}`\n"
+                        f"Username: `@{user_username or 'Not set'}`\n"
+                        f"Your Status: {user_status}{expiry_info}\n"
+                        f"Files Uploaded: {current_files} / {limit_str}\n\n"
+                        f"🛡️ **AUTO MALWARE DETECTION ACTIVE**\n"
+                        f"✅ Clean files are auto-approved\n"
+                        f"⚠️ Suspicious files require admin review\n\n"
+                        f"Host & run Python (`.py`) or JS (`.js`) scripts.\n"
+                        f"Upload single scripts or `.zip` archives.\n\n"
+                        f"Use buttons or type commands.")
     main_reply_markup = create_reply_keyboard_main_menu(user_id)
     try:
         if photo_file_id: bot.send_photo(chat_id, photo_file_id)
@@ -1850,12 +1772,9 @@ def _logic_check_files(message):
 
 def _logic_view_pending(message):
     user_id = message.from_user.id
-    if user_id not in admin_ids:
+    # Check if user has permission to view pending files
+    if user_id not in admin_ids or not admin_permissions.has_permission(user_id, 'can_view_pending'):
         bot.reply_to(message, "Admin permissions required.")
-        return
-    
-    if not has_permission(user_id, 'can_approve'):
-        bot.reply_to(message, "❌ You don't have permission to approve files.")
         return
     
     pending_files = get_all_pending_files()
@@ -1908,7 +1827,7 @@ def _logic_bot_speed(message):
                      f"Bot Status: {status}\n"
                      f"Your Level: {user_level}")
         
-        if user_id in admin_ids and has_permission(user_id, 'can_approve'):
+        if user_id in admin_ids and admin_permissions.has_permission(user_id, 'can_view_pending'):
             pending_count = get_pending_files_count()
             speed_msg += f"\n⚠️ Pending Malware Files: {pending_count}"
             
@@ -1927,12 +1846,8 @@ def _logic_uptime(message):
     bot.reply_to(message, f"Bot Uptime: `{uptime_str}`", parse_mode='Markdown')
 
 def _logic_subscriptions_panel(message):
-    user_id = message.from_user.id
-    if user_id not in admin_ids:
+    if message.from_user.id not in admin_ids:
         bot.reply_to(message, "Admin permissions required.")
-        return
-    if not has_permission(user_id, 'can_manage_subs'):
-        bot.reply_to(message, "❌ You don't have permission to manage subscriptions.")
         return
     bot.reply_to(message, "Subscription Management\nUse inline buttons from /start or admin command menu.", reply_markup=create_subscription_menu())
 
@@ -1954,20 +1869,18 @@ def _logic_statistics(message):
     stats_msg_base = (f"Bot Statistics:\n\n"
                       f"Total Users: {total_users}\n"
                       f"Total File Records: {total_files_records}\n"
-                      f"Total Active Bots: {running_bots_count}\n"
-                      f"Cloned Bots Running: {len(cloned_bots)}\n")
+                      f"Total Active Bots: {running_bots_count}\n")
 
     if user_id in admin_ids:
-        pending_count = get_pending_files_count() if has_permission(user_id, 'can_approve') else 0
+        pending_count = get_pending_files_count()
         approved_count = sum(1 for uid in user_files for fn, _ in user_files[uid] 
                            if get_file_status(uid, fn)['status'] == FILE_STATUS_APPROVED)
         
         stats_msg_admin = (f"Bot Status: {'Locked' if bot_locked else 'Unlocked'}\n"
                            f"Your Running Bots: {user_running_bots}\n"
                            f"📊 **Approval Stats:**\n"
-                           f"   ✅ Approved Files: {approved_count}")
-        if has_permission(user_id, 'can_approve'):
-            stats_msg_admin += f"\n   ⚠️ Malware Pending: {pending_count}"
+                           f"   ✅ Approved Files: {approved_count}\n"
+                           f"   ⚠️ Malware Pending: {pending_count}")
         stats_msg = stats_msg_base + stats_msg_admin
     else:
         stats_msg = stats_msg_base + f"Your Running Bots: {user_running_bots}"
@@ -1975,22 +1888,22 @@ def _logic_statistics(message):
     bot.reply_to(message, stats_msg)
 
 def _logic_broadcast_init(message):
-    user_id = message.from_user.id
-    if user_id not in admin_ids:
+    if message.from_user.id not in admin_ids:
         bot.reply_to(message, "Admin permissions required.")
         return
-    if not has_permission(user_id, 'can_broadcast'):
+    # Check if admin has broadcast permission
+    if not admin_permissions.has_permission(message.from_user.id, 'can_broadcast'):
         bot.reply_to(message, "❌ You don't have permission to broadcast messages.")
         return
     msg = bot.reply_to(message, "Send message to broadcast to all active users.\n/cancel to abort.")
     bot.register_next_step_handler(msg, process_broadcast_message)
 
 def _logic_toggle_lock_bot(message):
-    user_id = message.from_user.id
-    if user_id not in admin_ids:
+    if message.from_user.id not in admin_ids:
         bot.reply_to(message, "Admin permissions required.")
         return
-    if not has_permission(user_id, 'can_lock'):
+    # Check if admin has lock bot permission
+    if not admin_permissions.has_permission(message.from_user.id, 'can_lock_bot'):
         bot.reply_to(message, "❌ You don't have permission to lock/unlock the bot.")
         return
     global bot_locked
@@ -2003,6 +1916,10 @@ def _logic_admin_panel(message):
     user_id = message.from_user.id
     if user_id not in admin_ids:
         bot.reply_to(message, "Admin permissions required.")
+        return
+    # Check if admin has permission to see admin panel
+    if not admin_permissions.has_permission(user_id, 'can_see_admin_panel'):
+        bot.reply_to(message, "❌ You don't have permission to access the admin panel.")
         return
     bot.reply_to(message, "Admin Panel\nManage admins. Use inline buttons from /start or admin menu.",
                  reply_markup=create_admin_panel())
@@ -2027,7 +1944,8 @@ def _logic_run_all_scripts(message_or_call):
         reply_func("Admin permissions required.")
         return
     
-    if not has_permission(admin_user_id, 'can_run_all'):
+    # Check if admin has permission to run all scripts
+    if not admin_permissions.has_permission(admin_user_id, 'can_run_all_scripts'):
         reply_func("❌ You don't have permission to run all scripts.")
         return
 
@@ -2157,14 +2075,6 @@ def ping(message):
     bot.edit_message_text(f"Pong!\nLatency: {latency} ms\nUptime: {uptime_str}",
                           message.chat.id, msg.message_id)
 
-@bot.message_handler(commands=['clone'])
-def handle_clone_command(message):
-    _logic_clone_bot(message)
-
-@bot.message_handler(commands=['myclones'])
-def handle_my_clones_command(message):
-    _logic_my_clones(message)
-
 BUTTON_TEXT_TO_LOGIC = {
     "📢 Updates Channel": _logic_updates_channel,
     "📤 Upload File": _logic_upload_file,
@@ -2178,8 +2088,7 @@ BUTTON_TEXT_TO_LOGIC = {
     "🔒 Lock Bot": _logic_toggle_lock_bot,
     "🟢 Running All Code": _logic_run_all_scripts,
     "👑 Admin Panel": _logic_admin_panel,
-    "🤖 MPX AI": lambda m: handle_mpx_command(m),
-    "🔄 Clone Bot": _logic_clone_bot
+    "🤖 MPX AI": lambda m: handle_mpx_command(m)
 }
 
 @bot.message_handler(func=lambda message: message.text in BUTTON_TEXT_TO_LOGIC)
@@ -2283,16 +2192,238 @@ def handle_file_upload_doc(message):
         logger.error(f"General error handling file for {user_id}: {e}", exc_info=True)
         bot.reply_to(message, f"Unexpected error: {str(e)}")
 
+# Admin Settings Handlers
+def show_admin_settings(call):
+    user_id = call.from_user.id
+    if user_id != OWNER_ID:
+        bot.answer_callback_query(call.id, "Only Owner can access admin settings.", show_alert=True)
+        return
+    
+    settings_text = "⚙️ **Admin Settings Panel**\n\nToggle permissions for admins:\n"
+    markup = create_admin_settings_panel()
+    
+    bot.answer_callback_query(call.id)
+    bot.edit_message_text(settings_text, call.message.chat.id, call.message.message_id,
+                         reply_markup=markup, parse_mode='Markdown')
+
+def toggle_permission_callback(call):
+    user_id = call.from_user.id
+    if user_id != OWNER_ID:
+        bot.answer_callback_query(call.id, "Only Owner can toggle permissions.", show_alert=True)
+        return
+    
+    try:
+        _, target_id_str, perm_key = call.data.split('_', 2)
+        target_id = int(target_id_str)
+        
+        if admin_permissions.has_permission(target_id, perm_key):
+            admin_permissions.remove_admin_permission(target_id, perm_key)
+            save_admin_permission(target_id, perm_key, add=False)
+            status = "❌ DISABLED"
+        else:
+            admin_permissions.add_admin_permission(target_id, perm_key)
+            save_admin_permission(target_id, perm_key, add=True)
+            status = "✅ ENABLED"
+        
+        bot.answer_callback_query(call.id, f"Permission {perm_key} {status}")
+        
+        # Refresh the permission menu
+        new_markup = create_permission_toggle_menu(target_id)
+        bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id,
+                                     reply_markup=new_markup)
+    except Exception as e:
+        logger.error(f"Error toggling permission: {e}")
+        bot.answer_callback_query(call.id, "Error toggling permission.", show_alert=True)
+
+def toggle_setting_callback(call):
+    user_id = call.from_user.id
+    if user_id != OWNER_ID:
+        bot.answer_callback_query(call.id, "Only Owner can toggle settings.", show_alert=True)
+        return
+    
+    setting_map = {
+        'toggle_broadcast': 'can_broadcast',
+        'toggle_lock_bot_perm': 'can_lock_bot',
+        'toggle_manage_admins': 'can_manage_admins',
+        'toggle_approve_files': 'can_approve_files',
+        'toggle_run_all': 'can_run_all_scripts',
+        'toggle_manage_subs': 'can_manage_subs',
+        'toggle_view_pending': 'can_view_pending',
+    }
+    
+    setting_key = call.data
+    perm_key = setting_map.get(setting_key)
+    
+    if perm_key:
+        if admin_permissions.has_permission(OWNER_ID, perm_key):
+            admin_permissions.remove_admin_permission(OWNER_ID, perm_key)
+            save_admin_permission(OWNER_ID, perm_key, add=False)
+            bot.answer_callback_query(call.id, f"Setting {perm_key} DISABLED")
+        else:
+            admin_permissions.add_admin_permission(OWNER_ID, perm_key)
+            save_admin_permission(OWNER_ID, perm_key, add=True)
+            bot.answer_callback_query(call.id, f"Setting {perm_key} ENABLED")
+        
+        # Refresh settings panel
+        new_markup = create_admin_settings_panel()
+        bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id,
+                                     reply_markup=new_markup)
+
+def add_admin_detailed_callback(call):
+    user_id = call.from_user.id
+    if user_id != OWNER_ID:
+        bot.answer_callback_query(call.id, "Only Owner can add admins.", show_alert=True)
+        return
+    
+    msg = bot.send_message(call.message.chat.id, 
+                          "Enter User ID to add as Admin.\n\n"
+                          "After adding, you can configure their permissions in Admin Settings.\n"
+                          "/cancel to abort.")
+    bot.register_next_step_handler(msg, process_add_admin_detailed)
+
+def process_add_admin_detailed(message):
+    user_id = message.from_user.id
+    if user_id != OWNER_ID:
+        bot.reply_to(message, "Only Owner can add admins.")
+        return
+    
+    if message.text.lower() == '/cancel':
+        bot.reply_to(message, "Admin addition cancelled.")
+        return
+    
+    try:
+        new_admin_id = int(message.text.strip())
+        if new_admin_id <= 0:
+            raise ValueError("Invalid ID")
+        
+        if new_admin_id == OWNER_ID:
+            bot.reply_to(message, "Owner is already Owner.")
+            return
+        
+        if new_admin_id in admin_ids:
+            bot.reply_to(message, f"User `{new_admin_id}` is already an Admin.")
+            return
+        
+        add_admin_db(new_admin_id)
+        
+        # Grant default permissions to new admin
+        default_perms = ['can_broadcast', 'can_lock_bot', 'can_approve_files', 
+                        'can_run_all_scripts', 'can_manage_subs', 'can_view_pending']
+        
+        for perm in default_perms:
+            admin_permissions.add_admin_permission(new_admin_id, perm)
+            save_admin_permission(new_admin_id, perm, add=True)
+        
+        bot.reply_to(message, f"✅ User `{new_admin_id}` added as Admin!\n"
+                             f"They have been granted default permissions.\n"
+                             f"Use Admin Settings to modify permissions.")
+        
+        try:
+            bot.send_message(new_admin_id, 
+                           "🎉 You have been promoted to Admin!\n"
+                           "Use /start to see admin features.")
+        except:
+            pass
+            
+    except ValueError:
+        bot.reply_to(message, "Invalid User ID. Please send a numerical ID.")
+        msg = bot.send_message(message.chat.id, "Enter User ID to add as Admin:")
+        bot.register_next_step_handler(msg, process_add_admin_detailed)
+    except Exception as e:
+        logger.error(f"Error adding admin: {e}")
+        bot.reply_to(message, f"Error adding admin: {str(e)}")
+
+def remove_admin_detailed_callback(call):
+    user_id = call.from_user.id
+    if user_id != OWNER_ID:
+        bot.answer_callback_query(call.id, "Only Owner can remove admins.", show_alert=True)
+        return
+    
+    # Show list of admins to remove
+    admin_list = [aid for aid in admin_ids if aid != OWNER_ID]
+    if not admin_list:
+        bot.answer_callback_query(call.id, "No other admins to remove.", show_alert=True)
+        return
+    
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    for aid in admin_list:
+        markup.add(types.InlineKeyboardButton(f"Remove {aid}", callback_data=f'confirm_remove_admin_{aid}'))
+    markup.add(types.InlineKeyboardButton("Cancel", callback_data='admin_settings'))
+    
+    bot.answer_callback_query(call.id)
+    bot.edit_message_text("Select admin to remove:", call.message.chat.id, call.message.message_id,
+                         reply_markup=markup)
+
+def confirm_remove_admin(call):
+    user_id = call.from_user.id
+    if user_id != OWNER_ID:
+        bot.answer_callback_query(call.id, "Only Owner can remove admins.", show_alert=True)
+        return
+    
+    try:
+        admin_to_remove = int(call.data.split('_')[-1])
+        
+        if admin_to_remove == OWNER_ID:
+            bot.answer_callback_query(call.id, "Cannot remove Owner.", show_alert=True)
+            return
+        
+        if remove_admin_db(admin_to_remove):
+            # Also remove all permissions for this admin
+            for perm in list(admin_permissions.permissions.keys()):
+                admin_permissions.remove_admin_permission(admin_to_remove, perm)
+                save_admin_permission(admin_to_remove, perm, add=False)
+            
+            bot.answer_callback_query(call.id, f"Admin {admin_to_remove} removed.")
+            bot.edit_message_text(f"✅ Admin `{admin_to_remove}` removed successfully.",
+                                 call.message.chat.id, call.message.message_id,
+                                 reply_markup=create_admin_settings_panel())
+            
+            try:
+                bot.send_message(admin_to_remove, "You have been removed as Admin.")
+            except:
+                pass
+        else:
+            bot.answer_callback_query(call.id, "Failed to remove admin.", show_alert=True)
+    except Exception as e:
+        logger.error(f"Error removing admin: {e}")
+        bot.answer_callback_query(call.id, "Error removing admin.", show_alert=True)
+
+def list_admins_detailed_callback(call):
+    user_id = call.from_user.id
+    if user_id not in admin_ids:
+        bot.answer_callback_query(call.id, "Admin permissions required.", show_alert=True)
+        return
+    
+    admin_list_text = "👑 **Admins List**\n\n"
+    for aid in sorted(admin_ids):
+        if aid == OWNER_ID:
+            admin_list_text += f"👑 `{aid}` - Owner (All Permissions)\n"
+        else:
+            perms = []
+            for perm, allowed_ids in admin_permissions.permissions.items():
+                if aid in allowed_ids:
+                    perm_name = perm.replace('_', ' ').title()
+                    perms.append(perm_name)
+            
+            perms_text = ", ".join(perms) if perms else "No additional permissions"
+            admin_list_text += f"👮 `{aid}` - {perms_text}\n"
+    
+    if len(admin_list_text) > 4000:
+        admin_list_text = admin_list_text[:3500] + "\n... (truncated)"
+    
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("🔙 Back to Admin Settings", callback_data='admin_settings'))
+    
+    bot.answer_callback_query(call.id)
+    bot.edit_message_text(admin_list_text, call.message.chat.id, call.message.message_id,
+                         reply_markup=markup, parse_mode='Markdown')
+
 # Approval callback handlers
 def handle_approve_callback(call):
     try:
         admin_id = call.from_user.id
-        if admin_id not in admin_ids:
+        if admin_id not in admin_ids or not admin_permissions.has_permission(admin_id, 'can_approve_files'):
             bot.answer_callback_query(call.id, "Admin permissions required.", show_alert=True)
-            return
-        
-        if not has_permission(admin_id, 'can_approve'):
-            bot.answer_callback_query(call.id, "❌ You don't have permission to approve files.", show_alert=True)
             return
         
         _, user_id_str, file_name = call.data.split('_', 2)
@@ -2303,7 +2434,7 @@ def handle_approve_callback(call):
                 bot.send_message(user_id,
                                f"✅ **Malware Review Complete - File Approved!**\n\n"
                                f"📁 File: `{file_name}`\n"
-                               f"👮‍♂️ Approved by: Admin `{admin_id}`\n"
+                               f"👮‍♂️ Approved by: Admin\n"
                                f"⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
                                f"File has been reviewed and approved for use.",
                                parse_mode='Markdown')
@@ -2330,12 +2461,8 @@ def handle_approve_callback(call):
 def handle_reject_callback(call):
     try:
         admin_id = call.from_user.id
-        if admin_id not in admin_ids:
+        if admin_id not in admin_ids or not admin_permissions.has_permission(admin_id, 'can_approve_files'):
             bot.answer_callback_query(call.id, "Admin permissions required.", show_alert=True)
-            return
-        
-        if not has_permission(admin_id, 'can_approve'):
-            bot.answer_callback_query(call.id, "❌ You don't have permission to reject files.", show_alert=True)
             return
         
         _, user_id_str, file_name = call.data.split('_', 2)
@@ -2346,7 +2473,7 @@ def handle_reject_callback(call):
                 bot.send_message(user_id,
                                f"❌ **File Rejected Due to Malware!**\n\n"
                                f"📁 File: `{file_name}`\n"
-                               f"👮‍♂️ Rejected by: Admin `{admin_id}`\n"
+                               f"👮‍♂️ Rejected by: Admin\n"
                                f"⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
                                f"Reason: File contains malicious/suspicious code. Please upload a clean file.",
                                parse_mode='Markdown')
@@ -2373,12 +2500,8 @@ def handle_reject_callback(call):
 def handle_review_callback(call):
     try:
         admin_id = call.from_user.id
-        if admin_id not in admin_ids:
+        if admin_id not in admin_ids or not admin_permissions.has_permission(admin_id, 'can_approve_files'):
             bot.answer_callback_query(call.id, "Admin permissions required.", show_alert=True)
-            return
-        
-        if not has_permission(admin_id, 'can_approve'):
-            bot.answer_callback_query(call.id, "❌ You don't have permission to review files.", show_alert=True)
             return
         
         _, user_id_str, file_name = call.data.split('_', 2)
@@ -2417,7 +2540,7 @@ def handle_callbacks(call):
     data = call.data
     logger.info(f"Callback: User={user_id}, Data='{data}'")
 
-    if bot_locked and user_id not in admin_ids and data not in ['back_to_main', 'speed', 'stats', 'mpx_ai', 'uptime', 'clone_bot']:
+    if bot_locked and user_id not in admin_ids and data not in ['back_to_main', 'speed', 'stats', 'mpx_ai', 'uptime']:
         bot.answer_callback_query(call.id, "Bot locked by admin.", show_alert=True)
         return
     try:
@@ -2469,48 +2592,53 @@ def handle_callbacks(call):
         elif data == 'back_to_main':
             back_to_main_callback(call)
         elif data.startswith('confirm_broadcast_'):
-            if has_permission(user_id, 'can_broadcast'):
-                handle_confirm_broadcast(call)
-            else:
-                bot.answer_callback_query(call.id, "❌ No permission to broadcast.", show_alert=True)
+            handle_confirm_broadcast(call)
         elif data == 'cancel_broadcast':
             handle_cancel_broadcast(call)
         elif data == 'subscription':
-            admin_required_callback(call, subscription_management_callback, 'can_manage_subs')
+            admin_required_callback(call, subscription_management_callback)
         elif data == 'stats':
             stats_callback(call)
         elif data == 'lock_bot':
-            admin_required_callback(call, lock_bot_callback, 'can_lock')
+            admin_required_callback(call, lock_bot_callback)
         elif data == 'unlock_bot':
-            admin_required_callback(call, unlock_bot_callback, 'can_lock')
+            admin_required_callback(call, unlock_bot_callback)
         elif data == 'run_all_scripts':
-            admin_required_callback(call, run_all_scripts_callback, 'can_run_all')
+            admin_required_callback(call, run_all_scripts_callback)
         elif data == 'broadcast':
-            admin_required_callback(call, broadcast_init_callback, 'can_broadcast')
+            admin_required_callback(call, broadcast_init_callback)
         elif data == 'admin_panel':
-            admin_required_callback(call, admin_panel_callback, None)
+            admin_required_callback(call, admin_panel_callback)
+        elif data == 'admin_settings':
+            show_admin_settings(call)
+        elif data.startswith('toggle_perm_'):
+            toggle_permission_callback(call)
+        elif data in ['toggle_broadcast', 'toggle_lock_bot_perm', 'toggle_manage_admins', 
+                      'toggle_approve_files', 'toggle_run_all', 'toggle_manage_subs', 'toggle_view_pending']:
+            toggle_setting_callback(call)
+        elif data == 'add_admin_detailed':
+            add_admin_detailed_callback(call)
+        elif data == 'remove_admin_detailed':
+            remove_admin_detailed_callback(call)
+        elif data.startswith('confirm_remove_admin_'):
+            confirm_remove_admin(call)
+        elif data == 'list_admins_detailed':
+            list_admins_detailed_callback(call)
         elif data == 'add_admin':
             owner_required_callback(call, add_admin_init_callback)
         elif data == 'remove_admin':
             owner_required_callback(call, remove_admin_init_callback)
         elif data == 'list_admins':
-            admin_required_callback(call, list_admins_callback, None)
-        elif data == 'manage_admin_perms':
-            owner_required_callback(call, manage_admin_perms_callback)
-        elif data.startswith('toggle_perm_'):
-            owner_required_callback(call, toggle_admin_permission_callback)
+            admin_required_callback(call, list_admins_callback)
         elif data == 'add_subscription':
-            admin_required_callback(call, add_subscription_init_callback, 'can_manage_subs')
+            admin_required_callback(call, add_subscription_init_callback)
         elif data == 'remove_subscription':
-            admin_required_callback(call, remove_subscription_init_callback, 'can_manage_subs')
+            admin_required_callback(call, remove_subscription_init_callback)
         elif data == 'check_subscription':
-            admin_required_callback(call, check_subscription_init_callback, 'can_manage_subs')
+            admin_required_callback(call, check_subscription_init_callback)
         elif data == 'mpx_ai':
             bot.answer_callback_query(call.id)
             bot.send_message(call.message.chat.id, "Please send your query using the /mpx command followed by your question.\nExample: `/mpx What is AI?`", parse_mode='Markdown')
-        elif data == 'clone_bot':
-            bot.answer_callback_query(call.id)
-            _logic_clone_bot(call.message)
         elif data == 'uptime':
             bot.answer_callback_query(call.id)
             uptime_str = get_uptime()
@@ -2522,13 +2650,12 @@ def handle_callbacks(call):
         elif data.startswith('review_'):
             handle_review_callback(call)
         elif data == 'view_pending':
-            if user_id in admin_ids and has_permission(user_id, 'can_approve'):
+            if user_id in admin_ids:
                 _logic_view_pending(call.message)
                 bot.answer_callback_query(call.id)
             else:
-                bot.answer_callback_query(call.id, "Admin permissions required or no permission.", show_alert=True)
-        elif data == 'noop':
-            bot.answer_callback_query(call.id)
+                bot.answer_callback_query(call.id, "Admin permissions required.", show_alert=True)
+            
         else:
             bot.answer_callback_query(call.id, "Unknown action.")
             logger.warning(f"Unhandled callback data: {data} from user {user_id}")
@@ -2539,13 +2666,9 @@ def handle_callbacks(call):
         except Exception as e_ans:
             logger.error(f"Failed to answer callback after error: {e_ans}")
 
-def admin_required_callback(call, func_to_run, required_permission=None):
-    user_id = call.from_user.id
-    if user_id not in admin_ids:
+def admin_required_callback(call, func_to_run):
+    if call.from_user.id not in admin_ids:
         bot.answer_callback_query(call.id, "Admin permissions required.", show_alert=True)
-        return
-    if required_permission and not has_permission(user_id, required_permission):
-        bot.answer_callback_query(call.id, f"❌ You don't have permission to use this feature.", show_alert=True)
         return
     func_to_run(call)
 
@@ -2554,79 +2677,6 @@ def owner_required_callback(call, func_to_run):
         bot.answer_callback_query(call.id, "Owner permissions required.", show_alert=True)
         return
     func_to_run(call)
-
-def manage_admin_perms_callback(call):
-    """Show list of admins to manage permissions"""
-    bot.answer_callback_query(call.id)
-    
-    markup = types.InlineKeyboardMarkup(row_width=1)
-    for admin_id in sorted(list(admin_ids)):
-        if admin_id != OWNER_ID:
-            admin_name = get_admin_username(admin_id)
-            markup.add(types.InlineKeyboardButton(f"👤 {admin_name} ({admin_id})", callback_data=f'perm_menu_{admin_id}'))
-    
-    markup.add(types.InlineKeyboardButton("🔙 Back to Admin Panel", callback_data='admin_panel'))
-    
-    if len(admin_ids) <= 1:
-        bot.edit_message_text("No other admins found to manage permissions.", 
-                             call.message.chat.id, call.message.message_id, reply_markup=markup)
-    else:
-        bot.edit_message_text("📋 **Select Admin to Manage Permissions:**\n\n"
-                             "Tap on an admin to configure their permissions.",
-                             call.message.chat.id, call.message.message_id, 
-                             reply_markup=markup, parse_mode='Markdown')
-
-def toggle_admin_permission_callback(call):
-    """Toggle a specific permission for an admin"""
-    try:
-        _, perm_type, admin_id_str, permission = call.data.split('_', 3)
-        target_admin_id = int(admin_id_str)
-        
-        if target_admin_id == OWNER_ID:
-            bot.answer_callback_query(call.id, "Cannot modify Owner permissions!", show_alert=True)
-            return
-        
-        current_value = admin_permissions.get(target_admin_id, DEFAULT_ADMIN_PERMISSIONS.copy()).get(permission, False)
-        new_value = not current_value
-        
-        save_admin_permission(target_admin_id, permission, new_value)
-        
-        # Refresh the permission menu
-        admin_name = get_admin_username(target_admin_id)
-        perms = admin_permissions.get(target_admin_id, DEFAULT_ADMIN_PERMISSIONS.copy())
-        
-        markup = types.InlineKeyboardMarkup(row_width=1)
-        approve_icon = "✅" if perms.get('can_approve', False) else "❌"
-        markup.add(types.InlineKeyboardButton(f"{approve_icon} Approve Files", callback_data=f'toggle_perm_{target_admin_id}_can_approve'))
-        
-        broadcast_icon = "✅" if perms.get('can_broadcast', False) else "❌"
-        markup.add(types.InlineKeyboardButton(f"{broadcast_icon} Broadcast Messages", callback_data=f'toggle_perm_{target_admin_id}_can_broadcast'))
-        
-        lock_icon = "✅" if perms.get('can_lock', False) else "❌"
-        markup.add(types.InlineKeyboardButton(f"{lock_icon} Lock/Unlock Bot", callback_data=f'toggle_perm_{target_admin_id}_can_lock'))
-        
-        runall_icon = "✅" if perms.get('can_run_all', False) else "❌"
-        markup.add(types.InlineKeyboardButton(f"{runall_icon} Run All Scripts", callback_data=f'toggle_perm_{target_admin_id}_can_run_all'))
-        
-        subs_icon = "✅" if perms.get('can_manage_subs', False) else "❌"
-        markup.add(types.InlineKeyboardButton(f"{subs_icon} Manage Subscriptions", callback_data=f'toggle_perm_{target_admin_id}_can_manage_subs'))
-        
-        view_icon = "✅" if perms.get('can_view_files', False) else "❌"
-        markup.add(types.InlineKeyboardButton(f"{view_icon} View User Files", callback_data=f'toggle_perm_{target_admin_id}_can_view_files'))
-        
-        markup.add(types.InlineKeyboardButton("🔙 Back to Admin List", callback_data='manage_admin_perms'))
-        
-        bot.answer_callback_query(call.id, f"Permission {permission} set to {new_value}")
-        bot.edit_message_text(f"👑 **Admin: {admin_name}**\n\n"
-                             f"Tap buttons to toggle permissions:\n"
-                             f"✅ = Allowed | ❌ = Denied\n\n"
-                             f"Changes take effect immediately.",
-                             call.message.chat.id, call.message.message_id,
-                             reply_markup=markup, parse_mode='Markdown')
-        
-    except Exception as e:
-        logger.error(f"Error toggling permission: {e}", exc_info=True)
-        bot.answer_callback_query(call.id, "Error toggling permission.", show_alert=True)
 
 def upload_callback(call):
     user_id = call.from_user.id
@@ -2747,9 +2797,7 @@ def start_bot_callback(call):
         user_files_list = user_files.get(script_owner_id, [])
         file_info = next((f for f in user_files_list if f[0] == file_name), None)
         if not file_info:
-            bot.answer_callback_query(call.id, "File not found.", show_alert=True); check_files_callback(call); return
-
-        file_type = file_info[1]
+            bot.answer_callback_query(call.id, "File not found.", show_alert=True); check_files_callback(call); return        file_type = file_info[1]
         user_folder = get_user_folder(script_owner_id)
         file_path = os.path.join(user_folder, file_name)
 
@@ -3060,7 +3108,7 @@ def speed_callback(call):
                      f"Bot Status: {status}\n"
                      f"Your Level: {user_level}")
         
-        if user_id in admin_ids and has_permission(user_id, 'can_approve'):
+        if user_id in admin_ids:
             pending_count = get_pending_files_count()
             speed_msg += f"\n⚠️ Malware Pending: {pending_count}"
             
@@ -3090,22 +3138,15 @@ def back_to_main_callback(call):
     else: user_status = "Free User"
     
     admin_info = ""
-    if user_id in admin_ids and has_permission(user_id, 'can_approve'):
+    if user_id in admin_ids:
         pending_count = get_pending_files_count()
         if pending_count > 0:
             admin_info = f"\n⚠️ Malware Pending: {pending_count}"
     
-    main_menu_text = (f"══════════════════════════════\n"
-                      f"       🅾🅶🅶🆈 🅰🆈🅴 🅱🅾🆃\n"
-                      f"══════════════════════════════\n\n"
-                      f"🔥 **WELCOME BACK, {call.from_user.first_name.upper()}!** 🔥\n\n"
-                      f"├─🆔 **User ID:** `{user_id}`\n"
-                      f"├─📊 **Status:** {user_status}{expiry_info}{admin_info}\n"
-                      f"└─📁 **Files:** {current_files} / {limit_str}\n\n"
-                      f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    main_menu_text = (f"Welcome back, {call.from_user.first_name}!\n\nID: `{user_id}`\n"
+                      f"Status: {user_status}{expiry_info}{admin_info}\nFiles: {current_files} / {limit_str}\n\n"
                       f"🛡️ Auto Malware Detection Active\n"
-                      f"💡 Use buttons below or type commands")
-    
+                      f"Use buttons or type commands.")
     try:
         bot.answer_callback_query(call.id)
         bot.edit_message_text(main_menu_text, chat_id, call.message.message_id,
@@ -3132,6 +3173,9 @@ def stats_callback(call):
         logger.error(f"Error updating menu after stats_callback: {e}")
 
 def lock_bot_callback(call):
+    if not admin_permissions.has_permission(call.from_user.id, 'can_lock_bot'):
+        bot.answer_callback_query(call.id, "You don't have permission to lock the bot.", show_alert=True)
+        return
     global bot_locked; bot_locked = True
     logger.warning(f"Bot locked by Admin {call.from_user.id}")
     bot.answer_callback_query(call.id, "Bot locked.")
@@ -3139,6 +3183,9 @@ def lock_bot_callback(call):
     except Exception as e: logger.error(f"Error updating menu (lock): {e}")
 
 def unlock_bot_callback(call):
+    if not admin_permissions.has_permission(call.from_user.id, 'can_lock_bot'):
+        bot.answer_callback_query(call.id, "You don't have permission to unlock the bot.", show_alert=True)
+        return
     global bot_locked; bot_locked = False
     logger.warning(f"Bot unlocked by Admin {call.from_user.id}")
     bot.answer_callback_query(call.id, "Bot unlocked.")
@@ -3146,9 +3193,15 @@ def unlock_bot_callback(call):
     except Exception as e: logger.error(f"Error updating menu (unlock): {e}")
 
 def run_all_scripts_callback(call):
+    if not admin_permissions.has_permission(call.from_user.id, 'can_run_all_scripts'):
+        bot.answer_callback_query(call.id, "You don't have permission to run all scripts.", show_alert=True)
+        return
     _logic_run_all_scripts(call)
 
 def broadcast_init_callback(call):
+    if not admin_permissions.has_permission(call.from_user.id, 'can_broadcast'):
+        bot.answer_callback_query(call.id, "You don't have permission to broadcast.", show_alert=True)
+        return
     bot.answer_callback_query(call.id)
     msg = bot.send_message(call.message.chat.id, "Send message to broadcast.\n/cancel to abort.")
     bot.register_next_step_handler(msg, process_broadcast_message)
@@ -3156,8 +3209,8 @@ def broadcast_init_callback(call):
 def process_broadcast_message(message):
     user_id = message.from_user.id
     if user_id not in admin_ids: bot.reply_to(message, "Not authorized."); return
-    if not has_permission(user_id, 'can_broadcast'):
-        bot.reply_to(message, "❌ You don't have permission to broadcast.")
+    if not admin_permissions.has_permission(user_id, 'can_broadcast'):
+        bot.reply_to(message, "You don't have permission to broadcast.")
         return
     if message.text and message.text.lower() == '/cancel': bot.reply_to(message, "Broadcast cancelled."); return
 
@@ -3181,8 +3234,8 @@ def handle_confirm_broadcast(call):
     user_id = call.from_user.id
     chat_id = call.message.chat.id
     if user_id not in admin_ids: bot.answer_callback_query(call.id, "Admin only.", show_alert=True); return
-    if not has_permission(user_id, 'can_broadcast'):
-        bot.answer_callback_query(call.id, "❌ No permission to broadcast.", show_alert=True)
+    if not admin_permissions.has_permission(user_id, 'can_broadcast'):
+        bot.answer_callback_query(call.id, "You don't have permission to broadcast.", show_alert=True)
         return
     try:
         original_message = call.message.reply_to_message
@@ -3271,22 +3324,29 @@ def execute_broadcast(broadcast_text, photo_id, video_id, caption, admin_chat_id
     except Exception as e: logger.error(f"Failed to send broadcast result to admin {admin_chat_id}: {e}")
 
 def admin_panel_callback(call):
+    if not admin_permissions.has_permission(call.from_user.id, 'can_see_admin_panel'):
+        bot.answer_callback_query(call.id, "You don't have permission to access admin panel.", show_alert=True)
+        return
     bot.answer_callback_query(call.id)
     try:
-        bot.edit_message_text("Admin Panel\nManage admins and permissions.\n\n"
-                             "• Add/Remove Admins (Owner only)\n"
-                             "• Manage Admin Permissions (Owner only)",
+        bot.edit_message_text("Admin Panel\nManage admins (Owner actions may be restricted).",
                               call.message.chat.id, call.message.message_id, reply_markup=create_admin_panel())
     except Exception as e: logger.error(f"Error showing admin panel: {e}")
 
 def add_admin_init_callback(call):
     bot.answer_callback_query(call.id)
+    if not admin_permissions.has_permission(call.from_user.id, 'can_manage_admins'):
+        bot.send_message(call.message.chat.id, "You don't have permission to manage admins.")
+        return
     msg = bot.send_message(call.message.chat.id, "Enter User ID to promote to Admin.\n/cancel to abort.")
     bot.register_next_step_handler(msg, process_add_admin_id)
 
 def process_add_admin_id(message):
     owner_id_check = message.from_user.id
     if owner_id_check != OWNER_ID: bot.reply_to(message, "Owner only."); return
+    if not admin_permissions.has_permission(owner_id_check, 'can_manage_admins'):
+        bot.reply_to(message, "You don't have permission to manage admins.")
+        return
     if message.text.lower() == '/cancel': bot.reply_to(message, "Admin promotion cancelled."); return
     try:
         new_admin_id = int(message.text.strip())
@@ -3295,16 +3355,8 @@ def process_add_admin_id(message):
         if new_admin_id in admin_ids: bot.reply_to(message, f"User `{new_admin_id}` already Admin."); return
         add_admin_db(new_admin_id)
         logger.warning(f"Admin {new_admin_id} added by Owner {owner_id_check}.")
-        bot.reply_to(message, f"User `{new_admin_id}` promoted to Admin.\n\n"
-                             f"Default permissions set:\n"
-                             f"✅ Approve Files: ON\n"
-                             f"❌ Broadcast: OFF\n"
-                             f"❌ Lock Bot: OFF\n"
-                             f"❌ Run All Scripts: OFF\n"
-                             f"❌ Manage Subs: OFF\n"
-                             f"✅ View Files: ON\n\n"
-                             f"Use 'Manage Admin Permissions' to customize.")
-        try: bot.send_message(new_admin_id, "Congrats! You are now an Admin.\n\nYour permissions can be configured by the Owner.")
+        bot.reply_to(message, f"User `{new_admin_id}` promoted to Admin.")
+        try: bot.send_message(new_admin_id, "Congrats! You are now an Admin.")
         except Exception as e: logger.error(f"Failed to notify new admin {new_admin_id}: {e}")
     except ValueError:
         bot.reply_to(message, "Invalid ID. Send numerical ID or /cancel.")
@@ -3314,12 +3366,18 @@ def process_add_admin_id(message):
 
 def remove_admin_init_callback(call):
     bot.answer_callback_query(call.id)
+    if not admin_permissions.has_permission(call.from_user.id, 'can_manage_admins'):
+        bot.send_message(call.message.chat.id, "You don't have permission to manage admins.")
+        return
     msg = bot.send_message(call.message.chat.id, "Enter User ID of Admin to remove.\n/cancel to abort.")
     bot.register_next_step_handler(msg, process_remove_admin_id)
 
 def process_remove_admin_id(message):
     owner_id_check = message.from_user.id
     if owner_id_check != OWNER_ID: bot.reply_to(message, "Owner only."); return
+    if not admin_permissions.has_permission(owner_id_check, 'can_manage_admins'):
+        bot.reply_to(message, "You don't have permission to manage admins.")
+        return
     if message.text.lower() == '/cancel': bot.reply_to(message, "Admin removal cancelled."); return
     try:
         admin_id_remove = int(message.text.strip())
@@ -3341,31 +3399,25 @@ def process_remove_admin_id(message):
 def list_admins_callback(call):
     bot.answer_callback_query(call.id)
     try:
-        admin_list_str = ""
-        for aid in sorted(list(admin_ids)):
-            perms = admin_permissions.get(aid, DEFAULT_ADMIN_PERMISSIONS.copy())
-            perm_icons = ""
-            if aid != OWNER_ID:
-                perm_icons = f" [A:{'✅' if perms.get('can_approve') else '❌'} B:{'✅' if perms.get('can_broadcast') else '❌'} L:{'✅' if perms.get('can_lock') else '❌'}]"
-            admin_list_str += f"\n- `{aid}` {'👑(Owner)' if aid == OWNER_ID else ''}{perm_icons}"
-        
+        admin_list_str = "\n".join(f"- `{aid}` {'(Owner)' if aid == OWNER_ID else ''}" for aid in sorted(list(admin_ids)))
         if not admin_list_str: admin_list_str = "(No Owner/Admins configured!)"
-        bot.edit_message_text(f"Current Admins:\n\n{admin_list_str}\n\n"
-                             f"Legend: A=Approve, B=Broadcast, L=Lock Bot",
-                             call.message.chat.id, call.message.message_id, 
-                             reply_markup=create_admin_panel(), parse_mode='Markdown')
+        bot.edit_message_text(f"Current Admins:\n\n{admin_list_str}", call.message.chat.id,
+                              call.message.message_id, reply_markup=create_admin_panel(), parse_mode='Markdown')
     except Exception as e: logger.error(f"Error listing admins: {e}")
 
 def add_subscription_init_callback(call):
     bot.answer_callback_query(call.id)
+    if not admin_permissions.has_permission(call.from_user.id, 'can_manage_subs'):
+        bot.send_message(call.message.chat.id, "You don't have permission to manage subscriptions.")
+        return
     msg = bot.send_message(call.message.chat.id, "Enter User ID & days (e.g., `12345678 30`).\n/cancel to abort.")
     bot.register_next_step_handler(msg, process_add_subscription_details)
 
 def process_add_subscription_details(message):
     admin_id_check = message.from_user.id
     if admin_id_check not in admin_ids: bot.reply_to(message, "Not authorized."); return
-    if not has_permission(admin_id_check, 'can_manage_subs'):
-        bot.reply_to(message, "❌ You don't have permission to manage subscriptions.")
+    if not admin_permissions.has_permission(admin_id_check, 'can_manage_subs'):
+        bot.reply_to(message, "You don't have permission to manage subscriptions.")
         return
     if message.text.lower() == '/cancel': bot.reply_to(message, "Sub add cancelled."); return
     try:
@@ -3392,14 +3444,17 @@ def process_add_subscription_details(message):
 
 def remove_subscription_init_callback(call):
     bot.answer_callback_query(call.id)
+    if not admin_permissions.has_permission(call.from_user.id, 'can_manage_subs'):
+        bot.send_message(call.message.chat.id, "You don't have permission to manage subscriptions.")
+        return
     msg = bot.send_message(call.message.chat.id, "Enter User ID to remove sub.\n/cancel to abort.")
     bot.register_next_step_handler(msg, process_remove_subscription_id)
 
 def process_remove_subscription_id(message):
     admin_id_check = message.from_user.id
     if admin_id_check not in admin_ids: bot.reply_to(message, "Not authorized."); return
-    if not has_permission(admin_id_check, 'can_manage_subs'):
-        bot.reply_to(message, "❌ You don't have permission to manage subscriptions.")
+    if not admin_permissions.has_permission(admin_id_check, 'can_manage_subs'):
+        bot.reply_to(message, "You don't have permission to manage subscriptions.")
         return
     if message.text.lower() == '/cancel': bot.reply_to(message, "Sub removal cancelled."); return
     try:
@@ -3420,14 +3475,17 @@ def process_remove_subscription_id(message):
 
 def check_subscription_init_callback(call):
     bot.answer_callback_query(call.id)
+    if not admin_permissions.has_permission(call.from_user.id, 'can_manage_subs'):
+        bot.send_message(call.message.chat.id, "You don't have permission to check subscriptions.")
+        return
     msg = bot.send_message(call.message.chat.id, "Enter User ID to check sub.\n/cancel to abort.")
     bot.register_next_step_handler(msg, process_check_subscription_id)
 
 def process_check_subscription_id(message):
     admin_id_check = message.from_user.id
     if admin_id_check not in admin_ids: bot.reply_to(message, "Not authorized."); return
-    if not has_permission(admin_id_check, 'can_manage_subs'):
-        bot.reply_to(message, "❌ You don't have permission to check subscriptions.")
+    if not admin_permissions.has_permission(admin_id_check, 'can_manage_subs'):
+        bot.reply_to(message, "You don't have permission to check subscriptions.")
         return
     if message.text.lower() == '/cancel': bot.reply_to(message, "Sub check cancelled."); return
     try:
@@ -3475,9 +3533,10 @@ def keep_alive():
 if __name__ == '__main__':
     keep_alive()  # Render के लिए Flask server start
     
-    logger.info("="*40 + "\nBot Starting Up on Render with MALWARE DETECTION...\n" + f"Python: {sys.version.split()[0]}\n" +
+    logger.info("="*40 + "\nBot Starting Up on Render with MALWARE DETECTION & ANTI-CLONE...\n" + f"Python: {sys.version.split()[0]}\n" +
                 f"Base Dir: {BASE_DIR}\nUpload Dir: {UPLOAD_BOTS_DIR}\n" +
                 f"Data Dir: {IROTECH_DIR}\nOwner ID: {OWNER_ID}\nAdmins: {admin_ids}\n" +
+                f"Bot Fingerprint: {BOT_FINGERPRINT}\n" +
                 f"Start Time: {BOT_START_TIME}" + "="*40)
     
     logger.info("Starting bot polling...")
