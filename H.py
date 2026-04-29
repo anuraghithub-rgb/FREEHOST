@@ -1,4 +1,4 @@
-# H.py - SECURE VERSION WITH ANTI-CLONE & ADMIN CONTROLS
+# H.py - COMPLETE FIXED VERSION FOR RENDER WITH MALWARE DETECTION & ANTI-CLONE
 import telebot
 import subprocess
 import os
@@ -65,7 +65,9 @@ SPINNER = ["◐", "◓", "◑", "◒"]
 
 # ========== SECURITY & ANTI-CLONE SYSTEM ==========
 # Generate unique bot fingerprint
-BOT_FINGERPRINT = hashlib.sha256(f"{OWNER_ID}_{YOUR_USERNAME}_{uuid.getnode()}".encode()).hexdigest()[:16]
+OWNER_ID_FOR_FINGERPRINT = 8477195695
+YOUR_USERNAME_FOR_FINGERPRINT = '@BGMI_main'
+BOT_FINGERPRINT = hashlib.sha256(f"{OWNER_ID_FOR_FINGERPRINT}_{YOUR_USERNAME_FOR_FINGERPRINT}_{uuid.getnode()}".encode()).hexdigest()[:16]
 
 # Environment variables with YOUR TOKEN
 TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '871306FjB21_lNPuDPF017byvVcfEwhKC9Y')
@@ -76,11 +78,8 @@ UPDATE_CHANNEL = os.environ.get('UPDATE_CHANNEL', 'https://t.me/UROGGY')
 
 # ANTI-CLONE VERIFICATION
 # Only these specific user IDs can access admin features
-ALLOWED_ADMIN_IDS = {OWNER_ID, ADMIN_ID}  # Add more if needed
-
-# Bot will only work for these users (empty = all users allowed, but admin features restricted)
-# Set to empty list to allow all users, but admins must be in ALLOWED_ADMIN_IDS
-ALLOWED_USERS = []  # Leave empty to allow all users, or add specific user IDs
+ALLOWED_ADMIN_IDS = {OWNER_ID, ADMIN_ID}
+ALLOWED_USERS = []  # Leave empty to allow all users
 
 A4F_API_URL = "https://samuraiapi.in/v1/chat/completions"
 A4F_API_KEY = "sk-NK6SS9tpWghyFJwkZLoCis1sMaF6RwQ5WF09mUoKKR0VKCm7"
@@ -115,7 +114,7 @@ class AdminPermissions:
         self.permissions = {
             'can_broadcast': {OWNER_ID, ADMIN_ID},
             'can_lock_bot': {OWNER_ID, ADMIN_ID},
-            'can_manage_admins': {OWNER_ID},  # Only owner
+            'can_manage_admins': {OWNER_ID},
             'can_approve_files': {OWNER_ID, ADMIN_ID},
             'can_run_all_scripts': {OWNER_ID, ADMIN_ID},
             'can_manage_subs': {OWNER_ID, ADMIN_ID},
@@ -156,7 +155,6 @@ ORIGINAL_OWNER_USERNAME = YOUR_USERNAME
 ORIGINAL_UPDATE_CHANNEL = UPDATE_CHANNEL
 
 def check_bot_ownership():
-    """Verify this is the genuine bot instance (anti-clone)"""
     current_owner = os.environ.get('YOUR_USERNAME', '@BGMI_main')
     if current_owner != ORIGINAL_OWNER_USERNAME:
         logger.warning(f"⚠️ CLONE DETECTED! Owner mismatch: {current_owner} vs {ORIGINAL_OWNER_USERNAME}")
@@ -164,9 +162,8 @@ def check_bot_ownership():
     return True
 
 def is_authorized_user(user_id):
-    """Check if user is authorized to use the bot (anti-clone)"""
     if not ALLOWED_USERS:
-        return True  # All users allowed, but admin features restricted
+        return True
     return user_id in ALLOWED_USERS or user_id in admin_ids
 
 COMMAND_BUTTONS_LAYOUT_USER_SPEC = [
@@ -176,7 +173,6 @@ COMMAND_BUTTONS_LAYOUT_USER_SPEC = [
     ["📞 Contact Owner", "🤖 MPX Ai"]
 ]
 
-# Admin buttons - Only visible to authorized admins
 ADMIN_COMMAND_BUTTONS_LAYOUT_USER_SPEC = [
     ["📢 Updates Channel", "/ping"],
     ["📤 Upload File", "📂 Check Files"],
@@ -187,12 +183,9 @@ ADMIN_COMMAND_BUTTONS_LAYOUT_USER_SPEC = [
     ["🤖 MPX Ai", "⏱ Uptime"],
 ]
 
-# ========== TOGGLE BUTTONS FOR ADMIN PANEL ==========
 def create_admin_settings_panel():
-    """Create admin panel with toggle buttons for various permissions"""
     markup = types.InlineKeyboardMarkup(row_width=2)
     
-    # Permission toggles
     markup.row(
         types.InlineKeyboardButton("📢 Broadcast " + ("✅" if admin_permissions.has_permission(OWNER_ID, 'can_broadcast') else "❌"), 
                                    callback_data='toggle_broadcast'),
@@ -229,7 +222,6 @@ def create_admin_settings_panel():
     return markup
 
 def create_permission_toggle_menu(admin_id_to_edit=None):
-    """Create menu to toggle specific permissions for an admin"""
     markup = types.InlineKeyboardMarkup(row_width=1)
     
     target_id = admin_id_to_edit if admin_id_to_edit else OWNER_ID
@@ -255,7 +247,6 @@ def create_permission_toggle_menu(admin_id_to_edit=None):
 
 # ==================== MALWARE DETECTION SYSTEM ====================
 SUSPICIOUS_PATTERNS = [
-    # Command execution
     r'eval\s*\(',
     r'exec\s*\(',
     r'__import__\s*\(',
@@ -265,47 +256,31 @@ SUSPICIOUS_PATTERNS = [
     r'os\.popen\s*\(',
     r'commands\.getoutput',
     r'Runtime\.exec',
-    
-    # File operations (dangerous)
     r'os\.remove\s*\(',
     r'shutil\.rmtree\s*\(',
     r'os\.unlink\s*\(',
     r'os\.rmdir\s*\(',
-    
-    # Network (backdoor)
     r'socket\.socket',
     r'requests\.post',
     r'urllib\.request',
     r'http\.client',
     r'ftplib',
     r'telnetlib',
-    
-    # Encoding/Decoding (obfuscation)
     r'base64\.b64decode',
     r'codecs\.decode',
     r'zlib\.decompress',
-    
-    # Privilege escalation
     r'sudo',
     r'chmod',
     r'chown',
     r'os\.setuid',
-    
-    # Telegram bot tokens (potential bot abuse)
     r'\d{9,10}:AA[A-Za-z0-9_-]{33,}',
-    
-    # Crypto miners
     r'crypto',
     r'miner',
     r'bitcoin',
     r'monero',
-    
-    # Keyloggers
     r'pynput',
     r'keyboard\.record',
     r'GetAsyncKeyState',
-    
-    # Ransomware indicators
     r'encrypt',
     r'decrypt',
     r'\.locked',
@@ -324,10 +299,6 @@ SAFE_PATTERNS = [
 ]
 
 def scan_file_for_malware(file_path, file_type):
-    """
-    Scan file for malware patterns
-    Returns: (is_malicious, reason)
-    """
     try:
         if file_type == 'py':
             return scan_python_file(file_path)
@@ -342,39 +313,29 @@ def scan_file_for_malware(file_path, file_type):
         return (True, f"Scan error: {str(e)}")
 
 def scan_python_file(file_path):
-    """Scan Python file for suspicious code"""
     try:
         with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
             content = f.read()
         
-        # Check for suspicious patterns
         for pattern in SUSPICIOUS_PATTERNS:
             if re.search(pattern, content, re.IGNORECASE):
-                # Check if it's not a safe pattern (false positive)
                 is_safe = False
                 for safe_pattern in SAFE_PATTERNS:
                     if re.search(safe_pattern, content, re.IGNORECASE):
                         is_safe = True
                         break
-                
-                # If it's suspicious AND not safe, mark as malicious
                 if not is_safe:
                     return (True, f"Suspicious pattern found: {pattern}")
         
-        # Additional checks
         lines = content.split('\n')
-        
-        # Check for large base64 strings (often used in obfuscation)
         base64_pattern = r'[A-Za-z0-9+/]{100,}=*'
         if re.search(base64_pattern, content):
             return (True, "Large base64 string detected (possible obfuscation)")
         
-        # Check for very long lines (obfuscation)
         for line_num, line in enumerate(lines, 1):
             if len(line) > 500:
                 return (True, f"Very long line at {line_num} (possible obfuscation)")
         
-        # Heuristic: If file is mostly binary/encoded
         if len(content) > 0:
             ascii_ratio = sum(1 for c in content if 32 <= ord(c) <= 126) / len(content)
             if ascii_ratio < 0.5:
@@ -387,7 +348,6 @@ def scan_python_file(file_path):
         return (True, f"Scan error: {str(e)}")
 
 def scan_javascript_file(file_path):
-    """Scan JavaScript file for suspicious patterns"""
     try:
         with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
             content = f.read()
@@ -415,7 +375,6 @@ def scan_javascript_file(file_path):
         return (True, f"Scan error: {str(e)}")
 
 def scan_zip_file(file_path):
-    """Scan ZIP archive contents for malware"""
     try:
         suspicious_files = []
         temp_dir = tempfile.mkdtemp(prefix="malware_scan_")
@@ -424,7 +383,6 @@ def scan_zip_file(file_path):
             for member in zf.infolist():
                 if member.filename.endswith('.py') or member.filename.endswith('.js'):
                     try:
-                        # Extract and scan
                         extracted_path = zf.extract(member, temp_dir)
                         file_type = 'py' if member.filename.endswith('.py') else 'js'
                         is_malicious, reason = scan_file_for_malware(extracted_path, file_type)
@@ -433,7 +391,6 @@ def scan_zip_file(file_path):
                     except Exception as e:
                         suspicious_files.append(f"{member.filename}: Extract error - {e}")
         
-        # Cleanup
         shutil.rmtree(temp_dir, ignore_errors=True)
         
         if suspicious_files:
@@ -459,14 +416,12 @@ def init_db():
         c.execute('''CREATE TABLE IF NOT EXISTS admins
                      (user_id INTEGER PRIMARY KEY)''')
         
-        # File approvals table
         c.execute('''CREATE TABLE IF NOT EXISTS file_approvals
                      (user_id INTEGER, file_name TEXT, status TEXT, 
                       reviewed_by INTEGER, review_time TEXT, file_type TEXT,
                       uploaded_time TEXT, message_id INTEGER,
                       PRIMARY KEY (user_id, file_name))''')
         
-        # Admin permissions table
         c.execute('''CREATE TABLE IF NOT EXISTS admin_permissions
                      (admin_id INTEGER, permission TEXT,
                       PRIMARY KEY (admin_id, permission))''')
@@ -481,7 +436,6 @@ def init_db():
         logger.error(f"Database initialization error: {e}", exc_info=True)
 
 def load_admin_permissions_from_db():
-    """Load admin permissions from database"""
     try:
         conn = sqlite3.connect(DATABASE_PATH, check_same_thread=False)
         c = conn.cursor()
@@ -494,7 +448,6 @@ def load_admin_permissions_from_db():
         logger.error(f"Error loading admin permissions: {e}")
 
 def save_admin_permission(admin_id, permission, add=True):
-    """Save or remove admin permission from database"""
     try:
         conn = sqlite3.connect(DATABASE_PATH, check_same_thread=False)
         c = conn.cursor()
@@ -539,7 +492,6 @@ def load_data():
         conn.close()
         logger.info(f"Data loaded: {len(active_users)} users, {len(user_subscriptions)} subscriptions, {len(admin_ids)} admins.")
         
-        # Load admin permissions
         load_admin_permissions_from_db()
         
     except Exception as e:
@@ -552,7 +504,6 @@ load_data()
 DB_LOCK = threading.Lock()
 
 def save_file_approval(user_id, file_name, file_type, status=FILE_STATUS_PENDING, reviewed_by=None, message_id=None):
-    """Save or update file approval status"""
     with DB_LOCK:
         conn = sqlite3.connect(DATABASE_PATH, check_same_thread=False)
         c = conn.cursor()
@@ -571,7 +522,6 @@ def save_file_approval(user_id, file_name, file_type, status=FILE_STATUS_PENDING
             conn.close()
 
 def get_file_status(user_id, file_name):
-    """Get approval status of a file"""
     with DB_LOCK:
         conn = sqlite3.connect(DATABASE_PATH, check_same_thread=False)
         c = conn.cursor()
@@ -595,7 +545,6 @@ def get_file_status(user_id, file_name):
             conn.close()
 
 def update_file_status(user_id, file_name, status, admin_id):
-    """Update file approval status"""
     with DB_LOCK:
         conn = sqlite3.connect(DATABASE_PATH, check_same_thread=False)
         c = conn.cursor()
@@ -615,7 +564,6 @@ def update_file_status(user_id, file_name, status, admin_id):
             conn.close()
 
 def get_all_pending_files():
-    """Get all files pending approval"""
     with DB_LOCK:
         conn = sqlite3.connect(DATABASE_PATH, check_same_thread=False)
         c = conn.cursor()
@@ -632,7 +580,6 @@ def get_all_pending_files():
             conn.close()
 
 def get_pending_files_count():
-    """Get count of pending files"""
     with DB_LOCK:
         conn = sqlite3.connect(DATABASE_PATH, check_same_thread=False)
         c = conn.cursor()
@@ -646,7 +593,6 @@ def get_pending_files_count():
             conn.close()
 
 def send_file_for_approval(message, user_id, file_name, file_type):
-    """Send file to all admins for approval"""
     user = message.from_user
     file_info = (
         f"📄 **NEW FILE FOR APPROVAL**\n\n"
@@ -1268,7 +1214,6 @@ def remove_admin_db(admin_id):
         finally: conn.close()
 
 def create_main_menu_inline(user_id):
-    # Anti-clone check - if user is not authorized, deny access
     if not is_authorized_user(user_id):
         markup = types.InlineKeyboardMarkup(row_width=1)
         markup.add(types.InlineKeyboardButton("❌ Unauthorized Access", callback_data='no_access'))
@@ -1285,7 +1230,6 @@ def create_main_menu_inline(user_id):
         types.InlineKeyboardButton('🤖 MPX AI', callback_data='mpx_ai')
     ]
     
-    # Only show admin buttons to authorized admins
     show_admin_buttons = (user_id in admin_ids and user_id in ALLOWED_ADMIN_IDS) or user_id == OWNER_ID
     
     if show_admin_buttons:
@@ -1319,7 +1263,6 @@ def create_main_menu_inline(user_id):
     return markup
 
 def create_reply_keyboard_main_menu(user_id):
-    # Only show admin keyboard to authorized admins
     show_admin_keyboard = (user_id in admin_ids and user_id in ALLOWED_ADMIN_IDS) or user_id == OWNER_ID
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     layout_to_use = ADMIN_COMMAND_BUTTONS_LAYOUT_USER_SPEC if show_admin_keyboard else COMMAND_BUTTONS_LAYOUT_USER_SPEC
@@ -1492,16 +1435,12 @@ def handle_zip_file(downloaded_file_content, file_name_zip, message):
             shutil.move(src_path, dest_path); moved_count +=1
         logger.info(f"Moved {moved_count} items to {user_folder}")
 
-        # SCAN FOR MALWARE BEFORE SAVING APPROVAL
         temp_script_path = os.path.join(user_folder, main_script_name)
-        
-        # Scan the main script file
         is_malicious, reason = scan_file_for_malware(temp_script_path, file_type)
         
         save_user_file(user_id, main_script_name, file_type)
         
         if is_malicious:
-            # Malware detected - require admin approval
             logger.warning(f"Malware detected in ZIP {main_script_name} from user {user_id}: {reason}")
             save_file_approval(user_id, main_script_name, file_type, FILE_STATUS_PENDING)
             send_file_for_approval(message, user_id, main_script_name, file_type)
@@ -1514,7 +1453,6 @@ def handle_zip_file(downloaded_file_content, file_name_zip, message):
                         f"👮‍♂️ File sent to admins for manual review.",
                         parse_mode='Markdown')
         else:
-            # Clean - auto approve
             save_file_approval(user_id, main_script_name, file_type, FILE_STATUS_APPROVED, user_id)
             
             bot.reply_to(message, 
@@ -1525,7 +1463,6 @@ def handle_zip_file(downloaded_file_content, file_name_zip, message):
                         f"🎯 You can now run this file.",
                         parse_mode='Markdown')
             
-            # Notify admin about auto-approved file (only if admin has permission)
             for admin_id in admin_ids:
                 if admin_permissions.has_permission(admin_id, 'can_approve_files'):
                     try:
@@ -1552,11 +1489,9 @@ def handle_zip_file(downloaded_file_content, file_name_zip, message):
 
 def handle_py_file(file_path, script_owner_id, user_folder, file_name, message):
     try:
-        # Scan for malware
         is_malicious, reason = scan_file_for_malware(file_path, 'py')
         
         if is_malicious:
-            # Malware detected - require admin approval
             logger.warning(f"Malware detected in {file_name} from user {script_owner_id}: {reason}")
             save_user_file(script_owner_id, file_name, 'py')
             save_file_approval(script_owner_id, file_name, 'py', FILE_STATUS_PENDING)
@@ -1571,7 +1506,6 @@ def handle_py_file(file_path, script_owner_id, user_folder, file_name, message):
                         f"Auto-approval failed due to security concerns.",
                         parse_mode='Markdown')
         else:
-            # No malware - auto approve
             save_user_file(script_owner_id, file_name, 'py')
             save_file_approval(script_owner_id, file_name, 'py', FILE_STATUS_APPROVED, script_owner_id)
             
@@ -1582,7 +1516,6 @@ def handle_py_file(file_path, script_owner_id, user_folder, file_name, message):
                         f"🎯 You can now run this file.",
                         parse_mode='Markdown')
             
-            # Notify admin about auto-approved file (only if admin has permission)
             for admin_id in admin_ids:
                 if admin_permissions.has_permission(admin_id, 'can_approve_files'):
                     try:
@@ -1602,11 +1535,9 @@ def handle_py_file(file_path, script_owner_id, user_folder, file_name, message):
 
 def handle_js_file(file_path, script_owner_id, user_folder, file_name, message):
     try:
-        # Scan for malware
         is_malicious, reason = scan_file_for_malware(file_path, 'js')
         
         if is_malicious:
-            # Malware detected - require admin approval
             logger.warning(f"Malware detected in JS {file_name} from user {script_owner_id}: {reason}")
             save_user_file(script_owner_id, file_name, 'js')
             save_file_approval(script_owner_id, file_name, 'js', FILE_STATUS_PENDING)
@@ -1620,7 +1551,6 @@ def handle_js_file(file_path, script_owner_id, user_folder, file_name, message):
                         f"👮‍♂️ File has been sent to admins for manual review.",
                         parse_mode='Markdown')
         else:
-            # No malware - auto approve
             save_user_file(script_owner_id, file_name, 'js')
             save_file_approval(script_owner_id, file_name, 'js', FILE_STATUS_APPROVED, script_owner_id)
             
@@ -1631,7 +1561,6 @@ def handle_js_file(file_path, script_owner_id, user_folder, file_name, message):
                         f"🎯 You can now run this file.",
                         parse_mode='Markdown')
             
-            # Notify admin about auto-approved file (only if admin has permission)
             for admin_id in admin_ids:
                 if admin_permissions.has_permission(admin_id, 'can_approve_files'):
                     try:
@@ -1657,7 +1586,6 @@ def _logic_send_welcome(message):
 
     logger.info(f"Welcome request from user_id: {user_id}, username: @{user_username}")
     
-    # Anti-clone: Check if user is authorized
     if not is_authorized_user(user_id):
         bot.send_message(chat_id, 
                         "❌ **Unauthorized Access Detected!**\n\n"
@@ -1772,7 +1700,6 @@ def _logic_check_files(message):
 
 def _logic_view_pending(message):
     user_id = message.from_user.id
-    # Check if user has permission to view pending files
     if user_id not in admin_ids or not admin_permissions.has_permission(user_id, 'can_view_pending'):
         bot.reply_to(message, "Admin permissions required.")
         return
@@ -1891,7 +1818,6 @@ def _logic_broadcast_init(message):
     if message.from_user.id not in admin_ids:
         bot.reply_to(message, "Admin permissions required.")
         return
-    # Check if admin has broadcast permission
     if not admin_permissions.has_permission(message.from_user.id, 'can_broadcast'):
         bot.reply_to(message, "❌ You don't have permission to broadcast messages.")
         return
@@ -1902,7 +1828,6 @@ def _logic_toggle_lock_bot(message):
     if message.from_user.id not in admin_ids:
         bot.reply_to(message, "Admin permissions required.")
         return
-    # Check if admin has lock bot permission
     if not admin_permissions.has_permission(message.from_user.id, 'can_lock_bot'):
         bot.reply_to(message, "❌ You don't have permission to lock/unlock the bot.")
         return
@@ -1917,7 +1842,6 @@ def _logic_admin_panel(message):
     if user_id not in admin_ids:
         bot.reply_to(message, "Admin permissions required.")
         return
-    # Check if admin has permission to see admin panel
     if not admin_permissions.has_permission(user_id, 'can_see_admin_panel'):
         bot.reply_to(message, "❌ You don't have permission to access the admin panel.")
         return
@@ -1944,7 +1868,6 @@ def _logic_run_all_scripts(message_or_call):
         reply_func("Admin permissions required.")
         return
     
-    # Check if admin has permission to run all scripts
     if not admin_permissions.has_permission(admin_user_id, 'can_run_all_scripts'):
         reply_func("❌ You don't have permission to run all scripts.")
         return
@@ -2168,7 +2091,6 @@ def handle_file_upload_doc(message):
             with open(file_path, 'wb') as f: f.write(downloaded_file_content)
             logger.info(f"Saved single file to {file_path}")
             
-            # Scan file after saving
             file_type = 'js' if file_ext == '.js' else 'py'
             is_malicious, reason = scan_file_for_malware(file_path, file_type)
             
@@ -2227,7 +2149,6 @@ def toggle_permission_callback(call):
         
         bot.answer_callback_query(call.id, f"Permission {perm_key} {status}")
         
-        # Refresh the permission menu
         new_markup = create_permission_toggle_menu(target_id)
         bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id,
                                      reply_markup=new_markup)
@@ -2264,7 +2185,6 @@ def toggle_setting_callback(call):
             save_admin_permission(OWNER_ID, perm_key, add=True)
             bot.answer_callback_query(call.id, f"Setting {perm_key} ENABLED")
         
-        # Refresh settings panel
         new_markup = create_admin_settings_panel()
         bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id,
                                      reply_markup=new_markup)
@@ -2306,7 +2226,6 @@ def process_add_admin_detailed(message):
         
         add_admin_db(new_admin_id)
         
-        # Grant default permissions to new admin
         default_perms = ['can_broadcast', 'can_lock_bot', 'can_approve_files', 
                         'can_run_all_scripts', 'can_manage_subs', 'can_view_pending']
         
@@ -2339,7 +2258,6 @@ def remove_admin_detailed_callback(call):
         bot.answer_callback_query(call.id, "Only Owner can remove admins.", show_alert=True)
         return
     
-    # Show list of admins to remove
     admin_list = [aid for aid in admin_ids if aid != OWNER_ID]
     if not admin_list:
         bot.answer_callback_query(call.id, "No other admins to remove.", show_alert=True)
@@ -2368,7 +2286,6 @@ def confirm_remove_admin(call):
             return
         
         if remove_admin_db(admin_to_remove):
-            # Also remove all permissions for this admin
             for perm in list(admin_permissions.permissions.keys()):
                 admin_permissions.remove_admin_permission(admin_to_remove, perm)
                 save_admin_permission(admin_to_remove, perm, add=False)
@@ -2792,18 +2709,25 @@ def start_bot_callback(call):
         logger.info(f"Start request: Requester={requesting_user_id}, Owner={script_owner_id}, File='{file_name}'")
 
         if not (requesting_user_id == script_owner_id or requesting_user_id in admin_ids):
-            bot.answer_callback_query(call.id, "Permission denied to start this script.", show_alert=True); return
+            bot.answer_callback_query(call.id, "Permission denied to start this script.", show_alert=True)
+            return
 
         user_files_list = user_files.get(script_owner_id, [])
         file_info = next((f for f in user_files_list if f[0] == file_name), None)
         if not file_info:
-            bot.answer_callback_query(call.id, "File not found.", show_alert=True); check_files_callback(call); return        file_type = file_info[1]
+            bot.answer_callback_query(call.id, "File not found.", show_alert=True)
+            check_files_callback(call)
+            return
+        
+        file_type = file_info[1]
         user_folder = get_user_folder(script_owner_id)
         file_path = os.path.join(user_folder, file_name)
 
         if not os.path.exists(file_path):
             bot.answer_callback_query(call.id, f"Error: File `{file_name}` missing! Re-upload.", show_alert=True)
-            remove_user_file_db(script_owner_id, file_name); check_files_callback(call); return
+            remove_user_file_db(script_owner_id, file_name)
+            check_files_callback(call)
+            return
         
         file_status = get_file_status(script_owner_id, file_name)
         if file_status['status'] != FILE_STATUS_APPROVED:
@@ -2814,8 +2738,11 @@ def start_bot_callback(call):
 
         if is_bot_running(script_owner_id, file_name):
             bot.answer_callback_query(call.id, f"Script '{file_name}' already running.", show_alert=True)
-            try: bot.edit_message_reply_markup(chat_id_for_reply, call.message.message_id, reply_markup=create_control_buttons(script_owner_id, file_name, True))
-            except Exception as e: logger.error(f"Error updating buttons (already running): {e}")
+            try: 
+                bot.edit_message_reply_markup(chat_id_for_reply, call.message.message_id, 
+                                             reply_markup=create_control_buttons(script_owner_id, file_name, True))
+            except Exception as e: 
+                logger.error(f"Error updating buttons (already running): {e}")
             return
 
         bot.answer_callback_query(call.id, f"Attempting to start {file_name} for user {script_owner_id}...")
@@ -2825,7 +2752,8 @@ def start_bot_callback(call):
         elif file_type == 'js':
             threading.Thread(target=run_js_script, args=(file_path, script_owner_id, user_folder, file_name, call.message)).start()
         else:
-             bot.send_message(chat_id_for_reply, f"Error: Unknown file type '{file_type}' for '{file_name}'."); return
+            bot.send_message(chat_id_for_reply, f"Error: Unknown file type '{file_type}' for '{file_name}'.")
+            return
 
         time.sleep(1.5)
         is_now_running = is_bot_running(script_owner_id, file_name)
@@ -2834,11 +2762,14 @@ def start_bot_callback(call):
             bot.edit_message_text(
                 f"Controls for: `{file_name}` ({file_type}) of User `{script_owner_id}`\nStatus: {status_text}",
                 chat_id_for_reply, call.message.message_id,
-                reply_markup=create_control_buttons(script_owner_id, file_name, is_now_running), parse_mode='Markdown'
+                reply_markup=create_control_buttons(script_owner_id, file_name, is_now_running), 
+                parse_mode='Markdown'
             )
         except telebot.apihelper.ApiTelegramException as e:
-             if "message is not modified" in str(e): logger.warning(f"Msg not modified after starting {file_name}")
-             else: raise
+            if "message is not modified" in str(e): 
+                logger.warning(f"Msg not modified after starting {file_name}")
+            else: 
+                raise
     except (ValueError, IndexError) as e:
         logger.error(f"Error parsing start callback '{call.data}': {e}")
         bot.answer_callback_query(call.id, "Error: Invalid start command.", show_alert=True)
@@ -2848,8 +2779,10 @@ def start_bot_callback(call):
         try:
             _, script_owner_id_err_str, file_name_err = call.data.split('_', 2)
             script_owner_id_err = int(script_owner_id_err_str)
-            bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=create_control_buttons(script_owner_id_err, file_name_err, False))
-        except Exception as e_btn: logger.error(f"Failed to update buttons after start error: {e_btn}")
+            bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, 
+                                         reply_markup=create_control_buttons(script_owner_id_err, file_name_err, False))
+        except Exception as e_btn: 
+            logger.error(f"Failed to update buttons after start error: {e_btn}")
 
 def stop_bot_callback(call):
     try:
@@ -3531,7 +3464,7 @@ def keep_alive():
     logging.info("✅ Flask Keep-Alive server started on Render")
 
 if __name__ == '__main__':
-    keep_alive()  # Render के लिए Flask server start
+    keep_alive()
     
     logger.info("="*40 + "\nBot Starting Up on Render with MALWARE DETECTION & ANTI-CLONE...\n" + f"Python: {sys.version.split()[0]}\n" +
                 f"Base Dir: {BASE_DIR}\nUpload Dir: {UPLOAD_BOTS_DIR}\n" +
@@ -3541,7 +3474,6 @@ if __name__ == '__main__':
     
     logger.info("Starting bot polling...")
     
-    # Render compatible polling
     while True:
         try:
             bot.infinity_polling(logger_level=logging.INFO, timeout=60, long_polling_timeout=30)
