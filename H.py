@@ -27,7 +27,7 @@ from threading import Thread
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 UPLOAD_BOTS_DIR = os.path.join('/tmp', 'upload_bots')
 IROTECH_DIR = os.path.join('/tmp', 'inf')
-DATABASE_PATH = os.path.join(IROTECH_DIR, 'bot_data.db')
+DATABASE_PATH = os.path.join(IROTECH_DIR, 'botdata.db')
 
 # Create directories
 os.makedirs(UPLOAD_BOTS_DIR, exist_ok=True)
